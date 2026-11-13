@@ -113,6 +113,10 @@ pub enum AgentCommand {
         #[arg(long)]
         expected_revision: String,
     },
+    /// Stop an idle agent's process to free memory. Its tab and conversation stay.
+    Sleep(AgentArgs),
+    /// Start an asleep agent again on its saved conversation.
+    Wake(AgentArgs),
     /// Read unread assistant text across projects, with independent reader checkpoints.
     Inbox {
         #[command(flatten)]
@@ -304,6 +308,20 @@ pub(super) fn run_agent(command: AgentCommand, format: OutputFormat) -> Result<(
             local_control::agents::AgentInterruptParams {
                 agent_id: target.agent_id,
                 expected_revision,
+            },
+        )?,
+        AgentCommand::Sleep(args) => request(
+            &instance(&args.instance)?,
+            ActionKind::AgentSleep,
+            AgentTargetParams {
+                agent_id: args.agent_id,
+            },
+        )?,
+        AgentCommand::Wake(args) => request(
+            &instance(&args.instance)?,
+            ActionKind::AgentWake,
+            AgentTargetParams {
+                agent_id: args.agent_id,
             },
         )?,
         AgentCommand::Inbox {

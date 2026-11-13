@@ -1,3 +1,4 @@
+pub(crate) mod agent_sleep;
 pub mod auto_coordinate;
 pub(crate) mod auto_handoff_sleep_modal;
 mod build_plan_migration_modal;
@@ -3753,6 +3754,7 @@ impl Workspace {
                 ctx.notify();
             },
         );
+        Self::schedule_idle_sleep_check(ctx);
 
         // Re-render tabs when a CLI-agent session's model changes.
         ctx.subscribe_to_model(&CliAgentUsageModel::handle(ctx), |_, _, _, ctx| {
@@ -27603,6 +27605,13 @@ impl TypedActionView for Workspace {
                 crate::terminal::cli_agent_sessions::restore::AgentRestoreQueue::handle(ctx)
                     .update(ctx, |queue, ctx| queue.retry_stalled(ctx));
             }
+            SleepTab(index) => self.sleep_tab_from_menu(*index, ctx),
+            WakeTab(index) => {
+                self.wake_tab(*index, ctx);
+            }
+            SleepIdleTabs { every_project } => {
+                self.sleep_idle_tabs_from_menu(*every_project, ctx);
+            }
             DismissRestoreNotice => {
                 crate::terminal::cli_agent_sessions::restore::AgentRestoreQueue::handle(ctx)
                     .update(ctx, |queue, ctx| queue.dismiss_notice(ctx));
@@ -28433,6 +28442,21 @@ impl TypedActionView for Workspace {
                 self.sync_window_button_visibility(ctx);
             }
         };
+        // Choosing a tab wakes it. Only these count as choosing: a tab that ends up on screen
+        // because its neighbour closed, or because the app just launched, stays asleep.
+        if matches!(
+            action,
+            ActivateTab(_)
+                | ActivateTabByNumber(_)
+                | ActivatePrevTab
+                | ActivateNextTab
+                | ActivateLastTab
+                | CyclePrevSession
+                | CycleNextSession
+                | FocusPane(_)
+        ) {
+            self.wake_chosen_tab_soon(ctx);
+        }
         if action.should_save_app_state_on_action() {
             ctx.dispatch_global_action("workspace:save_app", ());
         }

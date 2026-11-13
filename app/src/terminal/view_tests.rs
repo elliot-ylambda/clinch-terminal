@@ -9717,10 +9717,10 @@ fn local_control_interrupt_preserves_conversation_and_does_not_invent_a_draft() 
     });
 }
 
-/// A restored tab's agent starts the first time the pane is shown, exactly once,
-/// and coordination sees it as `not_started`, then `starting` until it is up.
+/// A restored tab's agent does not start because its pane is shown. It starts once, when it is
+/// woken, and coordination sees it as `not_started`, then `starting` until it is up.
 #[test]
-fn deferred_agent_starts_once_when_the_pane_is_first_shown() {
+fn deferred_agent_starts_once_when_woken_and_not_when_merely_shown() {
     App::test((), |mut app| async move {
         initialize_app_for_terminal_view(&mut app);
         let terminal = add_window_with_terminal(&mut app, None);
@@ -9732,14 +9732,23 @@ fn deferred_agent_starts_once_when_the_pane_is_first_shown() {
             });
             let counter = starts.clone();
             view.defer_agent_start(Box::new(move |_| *counter.borrow_mut() += 1));
-            assert!(view.deferred_agent_start.is_some());
+            view.mark_agent_asleep(chrono::Utc::now(), ctx);
             assert_eq!(
                 view.local_control_agent_readiness(ctx).1,
                 Some("not_started")
             );
 
+            // Layout and focus mark panes visible in passing, at launch above all.
             view.mark_as_visible(ctx);
             view.mark_as_visible(ctx);
+            assert!(view.deferred_agent_start.is_some());
+            assert!(view.agent_is_asleep());
+        });
+        assert_eq!(*starts.borrow(), 0, "being shown must not start the agent");
+
+        terminal.update(&mut app, |view, ctx| {
+            assert!(view.start_deferred_agent(ctx));
+            assert!(!view.start_deferred_agent(ctx));
             assert!(view.deferred_agent_start.is_none());
             assert_eq!(
                 view.local_control_agent_readiness(ctx).1,
@@ -9754,6 +9763,25 @@ fn deferred_agent_starts_once_when_the_pane_is_first_shown() {
         });
 
         assert_eq!(*starts.borrow(), 1, "the agent must start exactly once");
+    });
+}
+
+/// A restore command with no Claude Code or Codex conversation behind it can't be shown as
+/// asleep, so it still starts the first time its pane is shown, once.
+#[test]
+fn a_restore_command_without_a_known_conversation_starts_when_first_shown() {
+    App::test((), |mut app| async move {
+        initialize_app_for_terminal_view(&mut app);
+        let terminal = add_window_with_terminal(&mut app, None);
+        let starts = Rc::new(RefCell::new(0));
+        terminal.update(&mut app, |view, ctx| {
+            let counter = starts.clone();
+            view.defer_agent_start(Box::new(move |_| *counter.borrow_mut() += 1));
+            assert!(!view.agent_is_asleep());
+            view.mark_as_visible(ctx);
+            view.mark_as_visible(ctx);
+        });
+        assert_eq!(*starts.borrow(), 1);
     });
 }
 

@@ -3,7 +3,7 @@ name: clinch-control
 description: Control and inspect the running Clinch app from Claude Code or Codex with its local control CLI. Use when the user asks to manipulate Clinch windows, project tabs, layouts, panes, sessions, sidebar sections, toolbelts, or UI surfaces; inspect or search rendered terminal contents across tabs; or launch a long-lived, interactive, or user-visible project process such as a dev server, watcher, REPL, or log tail in a new tab. Do not use for tests, lint, builds, Git commands, or other bounded work the agent can run in its own shell.
 ---
 
-<!-- managed-by: Clinch; version: 1.9.0 -->
+<!-- managed-by: Clinch; version: 1.10.0 -->
 
 # Clinch control
 
@@ -271,3 +271,11 @@ preserves the running process. Rediscover agent IDs after any transfer.
 For background Claude/Codex startup, guarded interruption, unread inboxes, bounded
 waits, and replayable events, use the `clinch-coordinate` skill. Those CLI controls
 also work for independent sessions without creating a coordinator.
+
+A Claude Code or Codex tab can be `asleep`: its agent process is stopped to free
+memory, and the tab keeps its title and conversation. `agent list` and `agent inspect`
+report `state: asleep` with `asleep_since`, and the pane shows only the shell the agent
+ran in, so `pane read` and `tab grep` see no live agent screen there. Do not type into
+an asleep pane or start an agent in it yourself. `agent sleep AGENT_ID` and `agent wake
+AGENT_ID` put an idle session to sleep and bring it back; the `clinch-coordinate` skill
+says when each is allowed.

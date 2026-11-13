@@ -603,6 +603,14 @@ pub enum WorkspaceAction {
     /// Hide the session-restore notice until the next restore.
     DismissRestoreNotice,
     RetryStalledRestores,
+    /// Stop the agents in this tab until it is woken. The tab and its conversation stay.
+    SleepTab(usize),
+    /// Start this asleep tab's agents again on their saved conversations.
+    WakeTab(usize),
+    /// Put every idle agent tab to sleep, in this project or in every project.
+    SleepIdleTabs {
+        every_project: bool,
+    },
     /// Focus a specific pane by its locator (pane_group_id and pane_id).
     FocusPane(PaneViewLocator),
     /// Start a new AI conversation in a terminal view. This sets the pending query state
@@ -1216,6 +1224,9 @@ impl WorkspaceAction {
             | FocusTerminalViewInWorkspace { .. }
             | DismissRestoreNotice
             | RetryStalledRestores
+            | SleepTab(_)
+            | WakeTab(_)
+            | SleepIdleTabs { .. }
             | FocusPane(..)
             | ShiftSelectTabRange { .. }
             | ToggleTabMultiSelection { .. }

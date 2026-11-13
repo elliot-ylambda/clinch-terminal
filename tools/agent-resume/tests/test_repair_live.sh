@@ -15,6 +15,7 @@ CLI="$HERE/clinch-agent-resume"
 
 printf '%s\n' \
   pane-cross pane-same pane-codex pane-shell pane-live-owner pane-bridge-owner pane-bridge-leak \
+  pane-asleep pane-asleep-other \
   > "$WARP_AGENT_RESUME_DIR/active-panes"
 
 # The visible root is Claude, but a nested Codex took over this pane. Journal history has
@@ -41,6 +42,14 @@ printf '%s\n' '{"role":"assistant"}' \
 # does not unexpectedly relaunch an old agent.
 "$CLI" write pane-shell 'clinch_agent_resume_launch claude exited-claude' /work
 
+# An asleep tab has no agent process on purpose. Clinch records it in asleep-panes.json, and
+# its entry is what wakes it, so repair-live must leave it alone. A pane whose id merely
+# starts the same way as an asleep one is still an ordinary exited agent.
+"$CLI" write pane-asleep 'clinch_agent_resume_launch claude asleep-claude' /work
+"$CLI" write pane-asleep-other 'clinch_agent_resume_launch claude exited-too' /work
+printf '%s' '{"panes":{"pane-asleep":"2026-11-13T22:14:00Z"}}' \
+  > "$WARP_AGENT_RESUME_DIR/asleep-panes.json"
+
 # If a future provider executable name is not recognized by the process scan, a live
 # hook-recorded PID/tty is stronger evidence than the empty map and must prevent deletion.
 test_tty="$(/bin/ps -o tty= -p $$ | tr -d '[:space:]')"
@@ -65,7 +74,7 @@ work64="$(printf /work | /usr/bin/base64 | tr -d '\n')"
 export WARP_AGENT_RESUME_LIVE_MAP="$TMP/live-map"
 
 out="$("$CLI" repair-live)"
-[[ "$out" == 'repaired 2 pane mappings; removed 1 inactive mappings' ]] \
+[[ "$out" == 'repaired 2 pane mappings; removed 2 inactive mappings' ]] \
   || { echo "FAIL: unexpected repair summary: $out"; exit 1; }
 grep -q 'claude parent-claude' "$WARP_AGENT_RESUME_DIR/pane-cross.json" \
   || { echo "FAIL: visible outer Claude was not restored"; exit 1; }
@@ -75,6 +84,10 @@ grep -q 'claude parent-same' "$WARP_AGENT_RESUME_DIR/pane-same.json" \
   || { echo "FAIL: same-provider nested Claude mapping was not repaired"; exit 1; }
 [[ ! -e "$WARP_AGENT_RESUME_DIR/pane-shell.json" ]] \
   || { echo "FAIL: exited agent mapping survived"; exit 1; }
+grep -q 'claude asleep-claude' "$WARP_AGENT_RESUME_DIR/pane-asleep.json" \
+  || { echo "FAIL: an asleep tab lost its saved conversation"; exit 1; }
+[[ ! -e "$WARP_AGENT_RESUME_DIR/pane-asleep-other.json" ]] \
+  || { echo "FAIL: a pane that only shares an asleep pane's prefix was kept"; exit 1; }
 grep -q 'claude live-owner' "$WARP_AGENT_RESUME_DIR/pane-live-owner.json" \
   || { echo "FAIL: live hook-recorded owner was removed after scan miss"; exit 1; }
 grep -q '"bridge": "session_01DUP"' "$WARP_AGENT_RESUME_DIR/pane-bridge-owner.json" \

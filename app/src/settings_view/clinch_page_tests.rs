@@ -258,3 +258,19 @@ fn plan_limits_action_toggles_the_existing_opt_in_setting() {
         assert_eq!(after, !before);
     });
 }
+
+#[test]
+fn the_idle_sleep_choices_offer_never_and_include_the_default() {
+    use super::{sleep_idle_choice_label, SLEEP_IDLE_HOUR_CHOICES};
+    use crate::settings::ClinchSleepIdleAgentTabsAfterHours;
+
+    let labels: Vec<String> = SLEEP_IDLE_HOUR_CHOICES
+        .iter()
+        .map(|hours| sleep_idle_choice_label(*hours))
+        .collect();
+    assert_eq!(
+        labels,
+        ["Never", "1 hour", "2 hours", "4 hours", "8 hours", "1 day"]
+    );
+    assert!(SLEEP_IDLE_HOUR_CHOICES.contains(&ClinchSleepIdleAgentTabsAfterHours::default_value()));
+}

@@ -44,7 +44,7 @@ fn bundled_skill_proactively_suggests_reusable_conversation_patterns() {
 #[test]
 fn bundled_control_skill_routes_only_persistent_processes_to_new_tabs() {
     let contents = bundled_control_skill_contents();
-    assert!(contents.contains("<!-- managed-by: Clinch; version: 1.9.0 -->"));
+    assert!(contents.contains("<!-- managed-by: Clinch; version: 1.10.0 -->"));
     assert!(contents.contains("tab create"));
     assert!(contents.contains("--cwd"));
     assert!(contents.contains("dev server"));
@@ -336,4 +336,30 @@ fn clinch_build_entrypoints_ship_the_control_wrapper() {
     assert!(release_verifier.contains("Contents/Resources/bin/clinch"));
     assert!(release_verifier.contains("Contents/Resources/bin/warpctrl"));
     assert!(release_verifier.contains("agent-skills/clinch-control/SKILL.md"));
+}
+
+/// Coordinators read session states from these skills. An asleep session must not look stuck or
+/// finished to them, and they must know sleeping one is refused while it is in use.
+#[test]
+fn bundled_skills_describe_asleep_sessions_and_the_sleep_and_wake_commands() {
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../resources/bundled/agent-skills/clinch-coordinate/SKILL.md"
+    );
+    let coordinate = std::fs::read_to_string(path).expect("bundled clinch-coordinate SKILL.md");
+    assert!(coordinate.contains("<!-- managed-by: Clinch; version: 1.12.0 -->"));
+    for required in [
+        "`asleep`",
+        "asleep_since",
+        "agent sleep AGENT_ID",
+        "agent wake AGENT_ID",
+        "sleep_unavailable_reason",
+        "going_to_sleep",
+        "Sending to an `asleep` session wakes it",
+    ] {
+        assert!(coordinate.contains(required), "missing {required:?}");
+    }
+    let control = bundled_control_skill_contents();
+    assert!(control.contains("`asleep`"));
+    assert!(control.contains("agent sleep AGENT_ID"));
 }

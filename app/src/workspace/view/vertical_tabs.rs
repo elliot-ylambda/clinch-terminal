@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+use chrono::Local;
 use instant::Instant;
 use languages::language_by_local_filename;
 use pathfinder_color::ColorU;
@@ -71,6 +72,7 @@ use crate::terminal::cli_agent_sessions::restore::{AgentRestoreQueue, RestoreSta
 use crate::terminal::cli_agent_sessions::{
     session_context_enabled, CLIAgentSessionKey, CLIAgentSessionStatus, CLIAgentSessionsModel,
 };
+use crate::terminal::view::agent_sleep::asleep_since_label;
 use crate::terminal::view::TerminalViewState;
 use crate::terminal::{CLIAgent, TerminalView};
 use crate::themes::theme::Fill as ThemeFill;
@@ -694,6 +696,7 @@ struct PaneRowBadgeMouseStates {
     diff_stats: MouseStateHandle,
     pull_request: MouseStateHandle,
     background_work: MouseStateHandle,
+    asleep: MouseStateHandle,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -3902,6 +3905,28 @@ fn terminal_restore_state(typed: &TypedPane<'_>, app: &AppContext) -> Option<Res
         .filter(|state| state.label().is_some())
 }
 
+/// Since when this row's agent has been asleep, if it is.
+fn terminal_asleep_since(
+    typed: &TypedPane<'_>,
+    app: &AppContext,
+) -> Option<chrono::DateTime<chrono::Utc>> {
+    let TypedPane::Terminal(terminal_pane) = typed else {
+        return None;
+    };
+    terminal_pane
+        .terminal_view(app)
+        .as_ref(app)
+        .agent_asleep_since()
+}
+
+/// What hovering an asleep row's moon says.
+fn asleep_tooltip(since: chrono::DateTime<chrono::Utc>, now: chrono::DateTime<Local>) -> String {
+    format!(
+        "Asleep since {}. Select it to wake it.",
+        asleep_since_label(since, now)
+    )
+}
+
 fn is_restoring(state: Option<RestoreState>) -> bool {
     matches!(state, Some(RestoreState::Queued | RestoreState::Starting))
 }
@@ -4018,10 +4043,36 @@ fn render_restore_spinner(appearance: &Appearance) -> Box<dyn Element> {
 fn render_row_mark(
     typed: &TypedPane<'_>,
     is_coordinator: bool,
+    asleep_mouse_state: MouseStateHandle,
     appearance: &Appearance,
     app: &AppContext,
 ) -> Box<dyn Element> {
     let mark = render_session_mark(typed, appearance, app);
+    let mark = match terminal_asleep_since(typed, app) {
+        // An asleep tab says since when on hover, without taking a second line in the list.
+        Some(since) => {
+            let ui_builder = appearance.ui_builder().clone();
+            let tooltip_text = asleep_tooltip(since, Local::now());
+            Hoverable::new(asleep_mouse_state, move |hover_state| {
+                if !hover_state.is_hovered() {
+                    return mark;
+                }
+                let mut stack = Stack::new().with_child(mark);
+                stack.add_positioned_overlay_child(
+                    ui_builder.tool_tip(tooltip_text.clone()).build().finish(),
+                    OffsetPositioning::offset_from_parent(
+                        vec2f(0., 4.),
+                        ParentOffsetBounds::WindowByPosition,
+                        ParentAnchor::BottomLeft,
+                        ChildAnchor::TopLeft,
+                    ),
+                );
+                stack.finish()
+            })
+            .finish()
+        }
+        None => mark,
+    };
     if !is_coordinator {
         return mark;
     }
@@ -4070,6 +4121,11 @@ fn render_session_mark(
     }
     let activity = vertical_tab_cli_agent_activity(typed, app);
     let color = activity.map_or(tokens.text_3, |activity| activity.color(tokens));
+    if terminal_asleep_since(typed, app).is_some() {
+        // A moon, whichever agent it is: asleep is a different shape from every running state.
+        // It keeps the color of a finished turn nobody has read yet, so that still shows.
+        return sized_mark(WarpIcon::Moon, color);
+    }
     let agent_icon = match typed {
         TypedPane::Terminal(terminal_pane) => {
             terminal_view_agent_icon_variant_respecting_tab_setting(
@@ -4112,8 +4168,14 @@ fn render_pane_row(props: PaneProps<'_>, app: &AppContext) -> Box<dyn Element> {
         && vertical_tab_cli_agent_activity(&props.typed, app)
             .is_none_or(|activity| activity == ProjectCliAgentActivity::Idle);
     let restore_state = terminal_restore_state(&props.typed, app);
-    let restore_label = restore_state.and_then(|state| state.label());
-    let title_color = WarpThemeFill::Solid(if is_restoring(restore_state) {
+    let restore_label = match &props.typed {
+        TypedPane::Terminal(terminal_pane) if restore_state.is_some() => {
+            AgentRestoreQueue::as_ref(app).label(terminal_pane.terminal_view(app).id())
+        }
+        _ => None,
+    };
+    let is_asleep = terminal_asleep_since(&props.typed, app).is_some();
+    let title_color = WarpThemeFill::Solid(if is_restoring(restore_state) || is_asleep {
         tokens.text_3
     } else if is_quiet {
         tokens.text_2
@@ -4184,6 +4246,7 @@ fn render_pane_row(props: PaneProps<'_>, app: &AppContext) -> Box<dyn Element> {
         .with_child(render_row_mark(
             &props.typed,
             props.is_coordinator,
+            props.badge_mouse_states.asleep.clone(),
             appearance,
             app,
         ))
@@ -5978,6 +6041,44 @@ fn render_detail_status_pill(
     .finish()
 }
 
+/// The hover card's status line for an asleep session: a moon and since when.
+fn render_detail_asleep_pill(
+    since: chrono::DateTime<chrono::Utc>,
+    appearance: &Appearance,
+) -> Box<dyn Element> {
+    let color = appearance.tokens().text_2;
+    Container::new(
+        Flex::row()
+            .with_main_axis_size(MainAxisSize::Min)
+            .with_cross_axis_alignment(CrossAxisAlignment::Center)
+            .with_spacing(4.)
+            .with_child(
+                ConstrainedBox::new(
+                    WarpIcon::Moon
+                        .to_warpui_icon(WarpThemeFill::Solid(color))
+                        .finish(),
+                )
+                .with_width(12.)
+                .with_height(12.)
+                .finish(),
+            )
+            .with_child(
+                Text::new_inline(
+                    format!("Asleep since {}", asleep_since_label(since, Local::now())),
+                    appearance.ui_font_family(),
+                    10.,
+                )
+                .with_color(color)
+                .finish(),
+            )
+            .finish(),
+    )
+    .with_padding(Padding::uniform(2.).with_left(4.).with_right(4.))
+    .with_background(ThemeFill::Solid(coloru_with_opacity(color, 10)))
+    .with_corner_radius(CornerRadius::with_all(RADIUS_SM))
+    .finish()
+}
+
 fn render_detail_wrapping_text(
     text: impl Into<String>,
     font_size: f32,
@@ -6109,7 +6210,9 @@ fn render_terminal_detail_section(
         .with_cross_axis_alignment(CrossAxisAlignment::Start)
         .with_spacing(DETAIL_SIDECAR_SECTION_GAP);
 
-    if let Some(status) = status.as_ref() {
+    if let Some(since) = terminal_view.agent_asleep_since() {
+        section.add_child(render_detail_asleep_pill(since, appearance));
+    } else if let Some(status) = status.as_ref() {
         section.add_child(render_detail_status_pill(status, appearance, app));
     }
     if let Some(model) = tab_agent_model_label(app, terminal_view.id()) {

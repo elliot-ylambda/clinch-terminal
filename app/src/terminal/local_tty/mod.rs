@@ -3,6 +3,8 @@
 
 //! TTY related functionality.
 
+#[cfg(unix)]
+pub(crate) mod agent_stop;
 pub mod docker_sandbox;
 pub mod event_loop;
 mod mio_channel;

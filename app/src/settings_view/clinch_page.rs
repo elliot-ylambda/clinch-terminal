@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use ::settings::{Setting, ToggleableSetting};
 #[cfg(feature = "local_fs")]
@@ -18,6 +19,9 @@ use warpui::elements::{
 use warpui::fonts::{Properties, Weight};
 use warpui::ui_components::button::ButtonVariant;
 use warpui::ui_components::components::{Coords, UiComponent, UiComponentStyles};
+use warpui::ui_components::radio_buttons::{
+    RadioButtonItem, RadioButtonLayout, RadioButtonStateHandle,
+};
 use warpui::ui_components::switch::SwitchStateHandle;
 use warpui::{AppContext, Entity, SingletonEntity, TypedActionView, View, ViewContext, ViewHandle};
 
@@ -35,7 +39,8 @@ use crate::report_if_error;
 use crate::settings::{
     AutoCreateWorktreesForNewTabs, CliAgentAutoContinueOnLimitReset, CliAgentUsageSettings,
     ClinchAutomaticUpdateCheck, ClinchContinueSessionsAfterRestart, ClinchSettings,
-    LocalControlMode, LocalControlSettings, ShowCliAgentPlanLimits,
+    ClinchSleepIdleAgentTabsAfterHours, LocalControlMode, LocalControlSettings,
+    ShowCliAgentPlanLimits,
 };
 use crate::terminal::session_settings::{NotificationsSettings, SessionSettings};
 use crate::ui_components::icons::Icon;
@@ -124,6 +129,8 @@ pub enum ClinchSettingsPageAction {
     CliAgentPlanLimits,
     CliAgentAutoContinue,
     ContinueSessionsAfterRestart,
+    /// Hours without use after which an agent tab sleeps; zero turns that off.
+    SleepIdleAgentTabsAfter(u32),
     AutomaticUpdateCheck,
     #[cfg(feature = "local_fs")]
     RemoteControlToggle,
@@ -205,6 +212,12 @@ impl ClinchSettingsPageView {
             .is_supported_on_current_platform()
         {
             usage_widgets.push(Box::new(ContinueSessionsAfterRestartWidget::default()));
+        }
+        if ClinchSettings::as_ref(ctx)
+            .sleep_idle_agent_tabs_after_hours
+            .is_supported_on_current_platform()
+        {
+            usage_widgets.push(Box::new(SleepIdleAgentTabsWidget::default()));
         }
         if CliAgentUsageSettings::as_ref(ctx)
             .show_plan_limits
@@ -415,6 +428,15 @@ impl TypedActionView for ClinchSettingsPageView {
                     report_if_error!(settings
                         .continue_sessions_after_restart
                         .toggle_and_save_value(ctx));
+                });
+                ctx.notify();
+            }
+            ClinchSettingsPageAction::SleepIdleAgentTabsAfter(hours) => {
+                let hours = *hours;
+                ClinchSettings::handle(ctx).update(ctx, |settings, ctx| {
+                    report_if_error!(settings
+                        .sleep_idle_agent_tabs_after_hours
+                        .set_value(hours, ctx));
                 });
                 ctx.notify();
             }
@@ -2001,6 +2023,95 @@ impl SettingsWidget for ContinueSessionsAfterRestartWidget {
                 "When Clinch restarts or updates, Claude Code and Codex sessions that were \
                  mid-turn are told to continue, and to check before repeating anything with \
                  outside effects. Typing in the pane first cancels it."
+                    .into(),
+            ),
+        )
+    }
+}
+
+/// The choices for automatic sleep, in hours of idleness. Zero is "Never".
+pub(super) const SLEEP_IDLE_HOUR_CHOICES: [u32; 6] = [0, 1, 2, 4, 8, 24];
+
+pub(super) fn sleep_idle_choice_label(hours: u32) -> String {
+    match hours {
+        0 => "Never".to_owned(),
+        1 => "1 hour".to_owned(),
+        24 => "1 day".to_owned(),
+        hours => format!("{hours} hours"),
+    }
+}
+
+struct SleepIdleAgentTabsWidget {
+    radio_state: RadioButtonStateHandle,
+    radio_buttons_states: Vec<MouseStateHandle>,
+}
+
+impl Default for SleepIdleAgentTabsWidget {
+    fn default() -> Self {
+        Self {
+            radio_state: Default::default(),
+            radio_buttons_states: SLEEP_IDLE_HOUR_CHOICES
+                .iter()
+                .map(|_| Default::default())
+                .collect(),
+        }
+    }
+}
+
+impl SettingsWidget for SleepIdleAgentTabsWidget {
+    type View = ClinchSettingsPageView;
+
+    fn search_terms(&self) -> &str {
+        "clinch claude code codex sleep idle tabs sessions memory wake asleep hours automatic"
+    }
+
+    fn render(
+        &self,
+        view: &Self::View,
+        appearance: &Appearance,
+        app: &AppContext,
+    ) -> Box<dyn Element> {
+        let hours = *ClinchSettings::as_ref(app).sleep_idle_agent_tabs_after_hours;
+        // A value set by hand in the settings file shows no choice as selected.
+        let selected = SLEEP_IDLE_HOUR_CHOICES
+            .iter()
+            .position(|choice| *choice == hours);
+        render_body_item::<ClinchSettingsPageAction>(
+            "Put idle sessions to sleep after".into(),
+            None,
+            LocalOnlyIconState::for_setting(
+                ClinchSleepIdleAgentTabsAfterHours::storage_key(),
+                ClinchSleepIdleAgentTabsAfterHours::sync_to_cloud(),
+                &mut view.local_only_icon_tooltip_states.borrow_mut(),
+                app,
+            ),
+            ToggleState::Enabled,
+            appearance,
+            appearance
+                .ui_builder()
+                .radio_buttons(
+                    self.radio_buttons_states.clone(),
+                    SLEEP_IDLE_HOUR_CHOICES
+                        .iter()
+                        .map(|hours| RadioButtonItem::text(sleep_idle_choice_label(*hours)))
+                        .collect(),
+                    self.radio_state.clone(),
+                    selected,
+                    appearance.ui_font_size(),
+                    RadioButtonLayout::Row,
+                )
+                .on_change(Rc::new(move |ctx, _, index| {
+                    if let Some(hours) = index.and_then(|index| SLEEP_IDLE_HOUR_CHOICES.get(index))
+                    {
+                        ctx.dispatch_typed_action(
+                            ClinchSettingsPageAction::SleepIdleAgentTabsAfter(*hours),
+                        );
+                    }
+                }))
+                .build()
+                .finish(),
+            Some(
+                "A Claude Code or Codex tab you haven't used for this long stops its agent to                  free memory. The tab stays in the list with a moon, and opening it or sending                  to it picks the conversation up again. A session that is working, waiting on                  you, or on screen never sleeps."
                     .into(),
             ),
         )

@@ -1133,6 +1133,16 @@ fn handle_terminal_view_event(
             Event::AppStateChanged => {
                 ctx.emit(pane_group::Event::AppStateChanged);
             }
+            Event::AgentStoppedForSleep {
+                resume_command,
+                since,
+            } => {
+                #[cfg(feature = "local_tty")]
+                group.finish_agent_sleep(pane_id, resume_command, *since, ctx);
+                #[cfg(not(feature = "local_tty"))]
+                let _ = (resume_command, since);
+            }
+            Event::AgentSleepFailed => group.agent_sleep_failed(pane_id, ctx),
             Event::BlockCompleted { block, is_local } => {
                 match group.terminal_session_by_id(pane_id) {
                     Some(pane) => {

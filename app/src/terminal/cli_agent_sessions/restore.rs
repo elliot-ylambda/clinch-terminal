@@ -1,9 +1,11 @@
-//! Restore saved conversations in their existing panes, independently of focus or rendering, and
-//! tell the ones a restart cut off mid-turn to carry on.
-use std::collections::{BTreeSet, HashSet};
+//! Brings saved conversations back in their existing panes. A session a restart cut off mid-turn
+//! starts again at launch and is told to carry on. Every other session stays asleep, with no agent
+//! process, until its tab is opened or something is sent to it.
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::rc::Rc;
 use std::time::Duration;
 
+use chrono::{DateTime, Utc};
 use instant::Instant;
 use warpui::r#async::Timer;
 use warpui::{
@@ -12,7 +14,8 @@ use warpui::{
 
 use super::{CLIAgentSessionKey, CLIAgentSessionsModel};
 use crate::agent_resume::{
-    read_interrupted_turns, write_interrupted_turns, RESTART_CONTINUE_MARKER,
+    read_asleep_panes, read_interrupted_turns, write_asleep_panes, write_interrupted_turns,
+    RESTART_CONTINUE_MARKER,
 };
 use crate::settings::ClinchSettings;
 use crate::terminal::view::TerminalView;
@@ -37,6 +40,8 @@ type RetryStalledCommand = Rc<dyn Fn(&mut AppContext)>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum RestoreState {
+    /// No agent process: the tab waits for someone to open it or send to it.
+    Asleep,
     Queued,
     Starting,
     Restored,
@@ -50,7 +55,7 @@ impl RestoreState {
             Self::Queued => Some("Queued for restore"),
             Self::Starting => Some("Restoring session…"),
             Self::Attention(reason) => Some(reason),
-            Self::Restored | Self::Closed => None,
+            Self::Asleep | Self::Restored | Self::Closed => None,
         }
     }
 }
@@ -103,6 +108,17 @@ pub(crate) fn mid_turn_panes(ctx: &AppContext) -> BTreeSet<Vec<u8>> {
     panes
 }
 
+/// Every asleep pane and when it went to sleep, across every window and project.
+fn asleep_panes(ctx: &AppContext) -> BTreeMap<Vec<u8>, DateTime<Utc>> {
+    let mut panes = BTreeMap::new();
+    for (_, workspace) in WorkspaceRegistry::as_ref(ctx).all_workspaces(ctx) {
+        for group in workspace.as_ref(ctx).tab_views() {
+            panes.extend(group.as_ref(ctx).asleep_agent_panes(ctx));
+        }
+    }
+    panes
+}
+
 /// Running commands that a restart right now would end for good, across every window and project.
 pub(crate) fn running_commands_outside_agents(ctx: &AppContext) -> usize {
     WorkspaceRegistry::as_ref(ctx)
@@ -127,6 +143,9 @@ struct RestoreEntry {
     continue_pending: bool,
     /// When the agent came back, which is when the wait to continue it starts.
     restored_at: Option<Instant>,
+    /// The agent was asleep and is starting because its tab was opened or sent to, not because
+    /// Clinch is restoring it at launch.
+    woken: bool,
 }
 
 #[derive(Default)]
@@ -139,6 +158,9 @@ pub(crate) struct AgentRestoreQueue {
     /// Panes the previous run recorded as mid-turn that no restored tab has claimed yet.
     unclaimed_interrupted_panes: HashSet<Vec<u8>>,
     last_recorded_panes: Option<BTreeSet<Vec<u8>>>,
+    /// Since when the previous run's asleep panes were asleep, until a restored tab claims it.
+    unclaimed_asleep_since: HashMap<Vec<u8>, DateTime<Utc>>,
+    last_recorded_asleep: Option<BTreeMap<Vec<u8>, DateTime<Utc>>>,
 }
 
 impl Entity for AgentRestoreQueue {
@@ -174,6 +196,7 @@ impl AgentRestoreQueue {
         if *ClinchSettings::as_ref(ctx).continue_sessions_after_restart {
             self.unclaimed_interrupted_panes = read_interrupted_turns();
         }
+        self.unclaimed_asleep_since = read_asleep_panes();
         self.schedule_recording(ctx);
     }
 
@@ -204,8 +227,18 @@ impl AgentRestoreQueue {
             write_interrupted_turns(&panes);
             self.last_recorded_panes = Some(panes);
         }
+        self.unclaimed_asleep_since.clear();
+        let asleep = asleep_panes(ctx);
+        if self.last_recorded_asleep.as_ref() != Some(&asleep) {
+            write_asleep_panes(&asleep);
+            self.last_recorded_asleep = Some(asleep);
+        }
     }
 
+    /// Takes charge of a pane restored at launch, whose agent is not running yet. A pane cut off
+    /// mid-turn starts through the queue, a couple at a time. Every other pane stays asleep until
+    /// its tab is opened or something is sent to it: starting them all is what once left dozens of
+    /// unused agents running after every launch.
     pub(crate) fn enqueue(
         &mut self,
         terminal: &ViewHandle<TerminalView>,
@@ -222,31 +255,116 @@ impl AgentRestoreQueue {
         {
             return;
         }
-        // A second writer of the same conversation must never be started automatically.
+        let continue_pending = self.unclaimed_interrupted_panes.remove(&pane_uuid);
+        let asleep_since = self
+            .unclaimed_asleep_since
+            .remove(&pane_uuid)
+            .unwrap_or_else(Utc::now);
+        self.insert(
+            terminal,
+            pane_uuid,
+            key,
+            cancel_pending_command,
+            retry_stalled_command,
+            (!continue_pending).then_some(asleep_since),
+            continue_pending,
+            ctx,
+        );
+    }
+
+    /// Takes charge of a pane whose agent Clinch just stopped to put its tab to sleep. Waking it
+    /// goes through the same checks as a restore at launch.
+    pub(crate) fn put_to_sleep(
+        &mut self,
+        terminal: &ViewHandle<TerminalView>,
+        pane_uuid: Vec<u8>,
+        key: CLIAgentSessionKey,
+        asleep_since: DateTime<Utc>,
+        cancel_pending_command: CancelPendingCommand,
+        retry_stalled_command: RetryStalledCommand,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        self.entries
+            .retain(|entry| entry.terminal.id() != terminal.id());
+        self.insert(
+            terminal,
+            pane_uuid,
+            key,
+            cancel_pending_command,
+            retry_stalled_command,
+            Some(asleep_since),
+            false,
+            ctx,
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn insert(
+        &mut self,
+        terminal: &ViewHandle<TerminalView>,
+        pane_uuid: Vec<u8>,
+        key: CLIAgentSessionKey,
+        cancel_pending_command: CancelPendingCommand,
+        retry_stalled_command: RetryStalledCommand,
+        asleep_since: Option<DateTime<Utc>>,
+        continue_pending: bool,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        // A second writer of the same conversation must never be started, by the queue or by
+        // opening its tab.
         let duplicate = self
             .entries
             .iter()
             .any(|entry| entry.key == key && entry.terminal.upgrade(ctx).is_some());
-        terminal.update(ctx, |view, _| view.manage_agent_restore_in_background());
-        let continue_pending = self.unclaimed_interrupted_panes.remove(&pane_uuid);
+        let state = match (duplicate, asleep_since) {
+            (true, _) => RestoreState::Attention("Already restoring in another tab"),
+            (false, Some(_)) => RestoreState::Asleep,
+            (false, None) => RestoreState::Queued,
+        };
+        terminal.update(ctx, |view, ctx| match (state, asleep_since) {
+            (RestoreState::Asleep, Some(since)) => view.mark_agent_asleep(since, ctx),
+            _ => view.manage_agent_restore_in_background(),
+        });
         self.entries.push(RestoreEntry {
             terminal: terminal.downgrade(),
             pane_uuid,
             key,
-            state: if duplicate {
-                RestoreState::Attention("Already restoring in another tab")
-            } else {
-                RestoreState::Queued
-            },
+            state,
             started_at: None,
             cancel_pending_command: Some(cancel_pending_command),
             retry_stalled_command,
             retrying: false,
             continue_pending,
             restored_at: None,
+            woken: false,
         });
+        if state == RestoreState::Asleep {
+            ctx.emit(());
+            return;
+        }
         self.completed_at = None;
         self.notice_dismissed = false;
+        ctx.emit(());
+        if !self.ticking {
+            self.ticking = true;
+            self.schedule_tick(ctx);
+        }
+    }
+
+    /// An asleep pane's agent was just started, by its tab or by a message to it. From here the
+    /// queue watches it come up the way it watches a restore.
+    pub(crate) fn woke(&mut self, terminal: EntityId, ctx: &mut ModelContext<Self>) {
+        let Some(entry) = self
+            .entries
+            .iter_mut()
+            .find(|entry| entry.terminal.id() == terminal && entry.state == RestoreState::Asleep)
+        else {
+            return;
+        };
+        entry.state = RestoreState::Starting;
+        entry.started_at = Some(Instant::now());
+        entry.woken = true;
+        self.completed_at = None;
         ctx.emit(());
         if !self.ticking {
             self.ticking = true;
@@ -259,6 +377,30 @@ impl AgentRestoreQueue {
             .iter()
             .find(|entry| entry.terminal.id() == terminal)
             .map(|entry| entry.state)
+    }
+
+    /// What this pane's tab says under its title while its agent comes back.
+    pub(crate) fn label(&self, terminal: EntityId) -> Option<&'static str> {
+        let entry = self
+            .entries
+            .iter()
+            .find(|entry| entry.terminal.id() == terminal)?;
+        match entry.state {
+            RestoreState::Starting if entry.woken => Some("Waking up…"),
+            state => state.label(),
+        }
+    }
+
+    /// Whether the queue is still starting this pane's agent, or has it flagged for the user.
+    pub(crate) fn is_bringing_back(&self, terminal: EntityId) -> bool {
+        self.entries
+            .iter()
+            .find(|entry| entry.terminal.id() == terminal)
+            .is_some_and(|entry| match entry.state {
+                RestoreState::Queued | RestoreState::Starting | RestoreState::Attention(_) => true,
+                RestoreState::Restored => entry.continue_pending,
+                RestoreState::Asleep | RestoreState::Closed => false,
+            })
     }
 
     /// The first open tab whose restore needs the user, for the notice to jump to.
@@ -315,9 +457,16 @@ impl AgentRestoreQueue {
         if self.notice_dismissed {
             return None;
         }
+        // The notice is about sessions Clinch is restoring at launch. An asleep tab isn't one of
+        // them, and a tab someone woke says so on its own row, unless its start needs the user.
+        let noticed = |entry: &&RestoreEntry| {
+            entry.state != RestoreState::Asleep
+                && (!entry.woken || matches!(entry.state, RestoreState::Attention(_)))
+        };
         let count = |state| {
             self.entries
                 .iter()
+                .filter(noticed)
                 .filter(|entry| entry.state == state)
                 .count()
         };
@@ -329,7 +478,7 @@ impl AgentRestoreQueue {
             .iter()
             .filter(|entry| matches!(entry.state, RestoreState::Attention(_)))
             .count();
-        let total = self.entries.len() - count(RestoreState::Closed);
+        let total = self.entries.iter().filter(noticed).count() - count(RestoreState::Closed);
         let stalled = self.stalled_count();
         if queued + starting == 0 && stalled > 0 && stalled == attention {
             Some(match stalled {
@@ -457,6 +606,10 @@ impl AgentRestoreQueue {
             if entry.state == RestoreState::Restored && entry.continue_pending {
                 Self::continue_turn(entry, &terminal, ctx);
             }
+            if before == RestoreState::Starting && entry.state != RestoreState::Starting {
+                // Up, or flagged for the user: either way the tab stops saying it is waking.
+                terminal.update(ctx, |view, ctx| view.agent_wake_settled(ctx));
+            }
             changed |= before != entry.state;
         }
 
@@ -511,10 +664,12 @@ impl AgentRestoreQueue {
             self.completed_at = Some(Instant::now());
         }
         if !self.ticking
-            && self
-                .entries
-                .iter()
-                .all(|entry| matches!(entry.state, RestoreState::Restored | RestoreState::Closed))
+            && self.entries.iter().all(|entry| {
+                matches!(
+                    entry.state,
+                    RestoreState::Asleep | RestoreState::Restored | RestoreState::Closed
+                )
+            })
         {
             self.ticking = self
                 .completed_at

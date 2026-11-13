@@ -221,6 +221,8 @@ define_action_catalog! {
     coordination {
         AgentLaunch => { name: "agent.launch", status: Implemented, target: Instance, params: AgentLaunch, result: TargetMetadata },
         AgentInterrupt => { name: "agent.interrupt", status: Implemented, target: Instance, params: AgentInterrupt, result: Acknowledgement },
+        AgentSleep => { name: "agent.sleep", status: Implemented, target: Instance, params: AgentTarget, result: Acknowledgement },
+        AgentWake => { name: "agent.wake", status: Implemented, target: Instance, params: AgentTarget, result: Acknowledgement },
         AgentInbox => { name: "agent.inbox", status: Implemented, target: Instance, params: AgentInbox, result: TargetList },
         AgentInboxAck => { name: "agent.inbox.ack", status: Implemented, target: Instance, params: AgentInboxAck, result: Acknowledgement },
         AgentEvents => { name: "agent.events", status: Implemented, target: Instance, params: AgentEvents, result: TargetList },

@@ -532,7 +532,7 @@ impl Workspace {
         let (revision, unavailable) = terminal.as_ref(ctx).local_control_agent_readiness(ctx);
         if let Some(reason) = unavailable {
             if reason == "not_started" {
-                // A restored coordinator waits to start until its tab is shown. Start it, the
+                // A restored coordinator is asleep until something needs it. Wake it, the
                 // same way a queued message does, and deliver once it is up.
                 terminal.update(ctx, |terminal, ctx| terminal.start_deferred_agent(ctx));
             }

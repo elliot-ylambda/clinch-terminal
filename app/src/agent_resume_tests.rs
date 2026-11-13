@@ -2145,3 +2145,41 @@ fn a_saved_codex_session_restores_with_its_identity_like_a_claude_one() {
         );
     }
 }
+
+#[test]
+fn asleep_panes_round_trip_with_the_time_they_fell_asleep() {
+    let dir = tempfile::tempdir().unwrap();
+    assert!(read_asleep_panes_in(dir.path()).is_empty());
+
+    let since = DateTime::parse_from_rfc3339("2026-11-07T23:08:00Z")
+        .unwrap()
+        .with_timezone(&Utc);
+    let panes = BTreeMap::from([(vec![0xab, 0xcd], since), (vec![0x01], since)]);
+    write_asleep_panes_in(dir.path(), &panes).unwrap();
+    let read = read_asleep_panes_in(dir.path());
+    assert_eq!(read.len(), 2);
+    assert_eq!(read.get([0xab, 0xcd].as_slice()), Some(&since));
+
+    // Waking every pane leaves nothing behind for the next launch.
+    write_asleep_panes_in(dir.path(), &BTreeMap::new()).unwrap();
+    assert!(read_asleep_panes_in(dir.path()).is_empty());
+}
+
+/// Stopping an agent for sleep must not look like the user closing it. The guard a quitting app
+/// leaves for each pane does that, and it comes off again if the agent never stopped.
+#[test]
+fn the_sleep_guard_copies_the_pane_entry_and_can_be_released() {
+    let dir = tempfile::tempdir().unwrap();
+    let pane = [0x12, 0x34];
+    let entry = r#"{"command":"clinch_agent_resume_launch claude abc","cwd":"/tmp","owner_pid":"42","owner_tty":"ttys001"}"#;
+    std::fs::write(dir.path().join("1234.json"), entry).unwrap();
+    let guard = dir.path().join("shutdown-owners").join("1234.json");
+
+    preserve_shutdown_owner_in(dir.path(), &pane).unwrap();
+    assert_eq!(std::fs::read_to_string(&guard).unwrap(), entry);
+
+    release_shutdown_owner_in(dir.path(), &pane);
+    assert!(!guard.exists());
+    // Releasing a guard that was never written is not an error.
+    release_shutdown_owner_in(dir.path(), &pane);
+}

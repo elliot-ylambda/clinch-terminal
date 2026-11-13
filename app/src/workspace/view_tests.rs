@@ -736,8 +736,39 @@ pub(crate) fn mock_workspace(app: &mut App) -> ViewHandle<Workspace> {
     workspace
 }
 
+/// Adds a background tab whose agent is asleep, as a tab restored at launch is. `starts` counts
+/// how often its agent is started.
+fn add_asleep_agent_tab(
+    workspace: &mut Workspace,
+    starts: &std::rc::Rc<std::cell::Cell<usize>>,
+    ctx: &mut ViewContext<Workspace>,
+) -> (ViewHandle<PaneGroup>, ViewHandle<TerminalView>) {
+    let group = workspace.add_tab_with_pane_layout_placed(
+        PanesLayout::SingleTerminal(Box::default()),
+        Arc::new(HashMap::new()),
+        None,
+        Some((true, None)),
+        None,
+        ctx,
+    );
+    let terminal = group.as_ref(ctx).active_session_view(ctx).unwrap();
+    CLIAgentSessionsModel::handle(ctx).update(ctx, |sessions, ctx| {
+        let mut session = crate::terminal::cli_agent_sessions::tests::idle_test_session(
+            crate::terminal::CLIAgent::Claude,
+        );
+        session.session_context.session_id = Some(format!("conversation-{}", terminal.id()));
+        sessions.set_session(terminal.id(), session, ctx);
+    });
+    let counter = starts.clone();
+    terminal.update(ctx, |view, ctx| {
+        view.defer_agent_start(Box::new(move |_| counter.set(counter.get() + 1)));
+        view.mark_agent_asleep(chrono::Utc::now(), ctx);
+    });
+    (group, terminal)
+}
+
 #[test]
-fn first_activation_resumes_an_unrendered_tab_in_place_once() {
+fn choosing_an_asleep_tab_wakes_it_once_in_place_and_leaves_the_others_asleep() {
     use std::cell::Cell;
     use std::rc::Rc;
 
@@ -752,53 +783,32 @@ fn first_activation_resumes_an_unrendered_tab_in_place_once() {
             WindowManager::handle(ctx).update(ctx, |state, _| {
                 state.overwrite_for_test(ApplicationStage::Active, Some(window_id));
             });
-
-            // Keep both tabs unrendered until after the first activation. Their
-            // terminal views do not yet have render-time PaneGroup ancestors.
-            let mut restored = Vec::new();
-            for counter in [&starts, &sibling_starts] {
-                let group = workspace.add_tab_with_pane_layout_placed(
-                    PanesLayout::SingleTerminal(Box::default()),
-                    Arc::new(HashMap::new()),
-                    None,
-                    Some((true, None)),
-                    None,
-                    ctx,
-                );
-                let terminal = group.as_ref(ctx).active_session_view(ctx).unwrap();
-                assert!(!ctx
-                    .view_ancestors(window_id, terminal.id())
-                    .contains(&group.id()));
-                let counter = counter.clone();
-                terminal.update(ctx, |view, _| {
-                    view.defer_agent_start(Box::new(move |_| counter.set(counter.get() + 1)));
-                });
-                restored.push((group, terminal));
-            }
+            let (group, terminal) = add_asleep_agent_tab(workspace, &starts, ctx);
+            let (sibling, _) = add_asleep_agent_tab(workspace, &sibling_starts, ctx);
             let tab_ids: Vec<_> = workspace
                 .tabs
                 .iter()
                 .map(|tab| tab.pane_group.id())
                 .collect();
-            let (group, terminal) = &restored[0];
             let index = tab_ids.iter().position(|id| *id == group.id()).unwrap();
+            let sibling_index = tab_ids.iter().position(|id| *id == sibling.id()).unwrap();
 
-            workspace.activate_tab(index, ctx);
+            // The user steps past the sibling and stops on the tab they want. A tab only passed
+            // over is no longer the chosen one by the time its moment is up.
+            workspace.handle_action(&WorkspaceAction::ActivateTab(sibling_index), ctx);
+            workspace.handle_action(&WorkspaceAction::ActivateTab(index), ctx);
+            assert_eq!(workspace.wake_tab_if_still_chosen(sibling.id(), ctx), 0);
+            assert_eq!(sibling_starts.get(), 0, "a tab passed over stays asleep");
+
+            assert_eq!(workspace.wake_tab_if_still_chosen(group.id(), ctx), 1);
+            assert_eq!(starts.get(), 1, "choosing the tab wakes it");
+            assert_eq!(workspace.wake_tab_if_still_chosen(group.id(), ctx), 0);
+            workspace.handle_action(&WorkspaceAction::ActivateTab(index), ctx);
+            assert_eq!(workspace.wake_tab_if_still_chosen(group.id(), ctx), 0);
             assert_eq!(
                 starts.get(),
                 1,
-                "the first selection must release the resume"
-            );
-            assert_eq!(
-                sibling_starts.get(),
-                0,
-                "unselected tabs must remain deferred"
-            );
-            workspace.activate_tab(index, ctx);
-            assert_eq!(
-                starts.get(),
-                1,
-                "selection must not launch a duplicate agent"
+                "choosing it again must not start a second agent"
             );
             assert_eq!(
                 workspace
@@ -807,7 +817,7 @@ fn first_activation_resumes_an_unrendered_tab_in_place_once() {
                     .map(|tab| tab.pane_group.id())
                     .collect::<Vec<_>>(),
                 tab_ids,
-                "resuming must preserve the existing tabs"
+                "waking must preserve the existing tabs"
             );
             assert_eq!(
                 workspace
@@ -817,14 +827,16 @@ fn first_activation_resumes_an_unrendered_tab_in_place_once() {
                     .unwrap()
                     .id(),
                 terminal.id(),
-                "resuming must preserve the existing pane"
+                "waking must preserve the existing pane"
             );
         });
     });
 }
 
+/// What used to start every restored agent: a tab landing on screen without anyone choosing it.
+/// Launch, a window coming forward, and focus passes all do that, and none of them wakes a tab.
 #[test]
-fn native_window_activation_resumes_the_selected_unrendered_tab() {
+fn a_tab_that_lands_on_screen_without_being_chosen_stays_asleep() {
     use std::cell::Cell;
     use std::rc::Rc;
 
@@ -839,37 +851,15 @@ fn native_window_activation_resumes_the_selected_unrendered_tab() {
             WindowManager::handle(ctx).update(ctx, |state, _| {
                 state.overwrite_for_test(ApplicationStage::Starting, None);
             });
-            let mut groups = Vec::new();
-            for counter in [&starts, &sibling_starts] {
-                let group = workspace.add_tab_with_pane_layout_placed(
-                    PanesLayout::SingleTerminal(Box::default()),
-                    Arc::new(HashMap::new()),
-                    None,
-                    Some((true, None)),
-                    None,
-                    ctx,
-                );
-                let terminal = group.as_ref(ctx).active_session_view(ctx).unwrap();
-                assert!(!ctx
-                    .view_ancestors(window_id, terminal.id())
-                    .contains(&group.id()));
-                let counter = counter.clone();
-                terminal.update(ctx, |view, _| {
-                    view.defer_agent_start(Box::new(move |_| counter.set(counter.get() + 1)));
-                });
-                groups.push(group);
-            }
+            let (group, terminal) = add_asleep_agent_tab(workspace, &starts, ctx);
+            add_asleep_agent_tab(workspace, &sibling_starts, ctx);
             let index = workspace
                 .tabs
                 .iter()
-                .position(|tab| tab.pane_group.id() == groups[0].id())
+                .position(|tab| tab.pane_group.id() == group.id())
                 .unwrap();
+            // Restore selects the tab that was selected at quit, without an action from the user.
             workspace.activate_tab(index, ctx);
-            assert_eq!(
-                starts.get(),
-                0,
-                "inactive windows must keep agents deferred"
-            );
 
             let previous = ctx.windows().state().clone();
             WindowManager::handle(ctx).update(ctx, |state, _| {
@@ -879,16 +869,21 @@ fn native_window_activation_resumes_the_selected_unrendered_tab() {
             let event = StateEvent::ValueChanged { current, previous };
             workspace.handle_window_state_change(&event, ctx);
             workspace.handle_window_state_change(&event, ctx);
+            workspace.focus_active_tab(ctx);
+            group.update(ctx, |group, ctx| group.mark_sessions_visible(ctx));
+
             assert_eq!(
                 starts.get(),
-                1,
-                "native activation must release the selected resume once"
-            );
-            assert_eq!(
-                sibling_starts.get(),
                 0,
-                "native activation must not start unselected tabs"
+                "landing on screen must not start the agent"
             );
+            assert_eq!(sibling_starts.get(), 0);
+            assert!(terminal.as_ref(ctx).agent_is_asleep());
+            assert!(terminal.as_ref(ctx).was_ever_visible());
+
+            // Its Wake button, or a key typed into it, is what starts it.
+            terminal.update(ctx, |view, ctx| assert!(view.wake_agent(ctx)));
+            assert_eq!(starts.get(), 1);
         });
     });
 }

@@ -1,7 +1,7 @@
 //! Reads the per-pane agent-resume registry written by the claude wrapper / codex hooks,
 //! plus the append-only journal and prompt mirror they maintain.
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::io::{BufRead, Read};
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
@@ -557,6 +557,8 @@ const ACTIVE_PANES_FILE: &str = "active-panes";
 const APP_TERMINATING_FILE: &str = ".app-terminating";
 const CONVERSATION_BOOKMARKS_FILE: &str = "conversation-bookmarks.json";
 const INTERRUPTED_TURNS_FILE: &str = "interrupted-turns.json";
+const ASLEEP_PANES_FILE: &str = "asleep-panes.json";
+const SHUTDOWN_OWNERS_DIR: &str = "shutdown-owners";
 /// A list older than this is ignored. Clinch must not revive a turn, and possibly its deploy, days
 /// after it stopped.
 const INTERRUPTED_TURNS_MAX_AGE_HOURS: i64 = 24;
@@ -1064,6 +1066,57 @@ fn read_interrupted_turns_in(dir: &Path, now: DateTime<Utc>) -> HashSet<Vec<u8>>
         .collect()
 }
 
+/// When each asleep pane's agent went to sleep, keyed by hex pane UUID.
+#[derive(Debug, Default, Deserialize, Serialize)]
+struct AsleepPanesFile {
+    panes: BTreeMap<String, DateTime<Utc>>,
+}
+
+/// Records since when each asleep pane has been asleep, so a restart can keep saying so.
+pub(crate) fn write_asleep_panes(panes: &BTreeMap<Vec<u8>, DateTime<Utc>>) {
+    if !runtime_enabled() {
+        return;
+    }
+    let Some(dir) = registry_dir() else { return };
+    if let Err(err) = write_asleep_panes_in(&dir, panes) {
+        log::warn!("could not record asleep agent tabs: {err}");
+    }
+}
+
+fn write_asleep_panes_in(
+    dir: &Path,
+    panes: &BTreeMap<Vec<u8>, DateTime<Utc>>,
+) -> std::io::Result<()> {
+    let file = AsleepPanesFile {
+        panes: panes
+            .iter()
+            .map(|(pane, since)| (hex::encode(pane), *since))
+            .collect(),
+    };
+    write_private_atomic(dir, ASLEEP_PANES_FILE, &serde_json::to_vec(&file)?)
+}
+
+/// Since when each pane was asleep, as the previous run recorded it.
+pub(crate) fn read_asleep_panes() -> HashMap<Vec<u8>, DateTime<Utc>> {
+    if !runtime_enabled() {
+        return HashMap::new();
+    }
+    registry_dir()
+        .map(|dir| read_asleep_panes_in(&dir))
+        .unwrap_or_default()
+}
+
+fn read_asleep_panes_in(dir: &Path) -> HashMap<Vec<u8>, DateTime<Utc>> {
+    std::fs::read(dir.join(ASLEEP_PANES_FILE))
+        .ok()
+        .and_then(|contents| serde_json::from_slice::<AsleepPanesFile>(&contents).ok())
+        .unwrap_or_default()
+        .panes
+        .into_iter()
+        .filter_map(|(pane, since)| Some((hex::decode(pane).ok()?, since)))
+        .collect()
+}
+
 fn write_private_atomic(dir: &Path, name: &str, contents: &[u8]) -> std::io::Result<()> {
     std::fs::create_dir_all(dir)?;
     #[cfg(unix)]
@@ -1110,7 +1163,38 @@ fn preserve_shutdown_owner_in(dir: &Path, uuid: &[u8]) -> std::io::Result<()> {
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
         Err(err) => return Err(err),
     };
-    write_private_atomic(&dir.join("shutdown-owners"), &filename, &contents)
+    write_private_atomic(&dir.join(SHUTDOWN_OWNERS_DIR), &filename, &contents)
+}
+
+/// Keeps a pane's saved session while Clinch stops its agent to put the tab to sleep. The agent's
+/// exit hook then sees the same guard a quitting app leaves, and doesn't take the stop for the
+/// user closing the session. The next session to start in the pane clears it.
+pub(crate) fn keep_session_through_sleep(uuid: &[u8]) {
+    if !runtime_enabled() {
+        return;
+    }
+    let Some(dir) = registry_dir() else { return };
+    if let Err(err) = preserve_shutdown_owner_in(&dir, uuid) {
+        log::warn!("could not keep an agent's saved session through sleep: {err}");
+    }
+}
+
+/// Undoes `keep_session_through_sleep` for an agent that didn't stop after all. Left in place, the
+/// guard would bring the session back at the next launch even after the user closed it.
+pub(crate) fn stop_keeping_session_through_sleep(uuid: &[u8]) {
+    let Some(dir) = registry_dir() else { return };
+    release_shutdown_owner_in(&dir, uuid);
+}
+
+fn release_shutdown_owner_in(dir: &Path, uuid: &[u8]) {
+    let path = dir
+        .join(SHUTDOWN_OWNERS_DIR)
+        .join(format!("{}.json", hex::encode(uuid)));
+    match std::fs::remove_file(path) {
+        Ok(()) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => log::warn!("could not release an agent's sleep guard: {err}"),
+    }
 }
 
 fn clear_app_terminating_marker() {

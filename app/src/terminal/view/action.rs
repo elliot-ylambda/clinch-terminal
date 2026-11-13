@@ -474,6 +474,8 @@ pub enum TerminalAction {
     /// Toggle the rich input editor for composing a prompt to send to a CLI agent.
     /// Triggered by Ctrl-G when a CLI agent is detected, or from the footer button.
     ToggleCLIAgentRichInput,
+    /// Start this asleep pane's agent again on its saved conversation.
+    WakeAgent,
 }
 
 // Manually implementing Debug to avoid leaking sensitive information in logs
@@ -763,6 +765,7 @@ impl fmt::Debug for TerminalAction {
             CycleNextOrchestrationChildAgent => write!(f, "CycleNextOrchestrationChildAgent"),
             ToggleSessionRecording => write!(f, "ToggleSessionRecording"),
             ToggleCLIAgentRichInput => write!(f, "ToggleCLIAgentRichInput"),
+            WakeAgent => write!(f, "WakeAgent"),
         }
     }
 }

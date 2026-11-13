@@ -18,9 +18,11 @@ use super::permissions::{ensure_action_allowed, ensure_feature_enabled};
 
 type Reply = Result<Value, ControlError>;
 
-/// Readiness reasons of a restored tab whose agent starts when first shown.
+/// Readiness reasons of an asleep tab, whose agent starts when a message arrives for it.
 const LAZY_NOT_STARTED: &str = "not_started";
 const LAZY_STARTING: &str = "starting";
+/// Clinch is stopping the agent to put its tab to sleep; it reports `not_started` once stopped.
+const GOING_TO_SLEEP: &str = "going_to_sleep";
 /// Guard recorded for a message queued while its agent was not yet running.
 const LAZY_START_GUARD: &str = "lazy-start";
 pub(super) type PendingReply = async_channel::Receiver<Reply>;
@@ -236,16 +238,22 @@ fn handle(
                 check_bridge(bridge, &owner, ctx)?;
                 let entry = super::agents::resolve(&owner, &target.agent_id, ctx)?;
                 let (revision, reason) = entry.terminal.as_ref(ctx).local_control_agent_readiness(ctx);
-                // A restored tab's agent starts when the tab is first shown; a message
-                // to it starts it now and, queued, waits for it to come up.
-                let lazy = matches!(reason, Some(LAZY_NOT_STARTED) | Some(LAZY_STARTING));
+                // An asleep tab has no agent process; a message to it wakes it and, queued,
+                // waits for it to come up.
+                let lazy = matches!(
+                    reason,
+                    Some(LAZY_NOT_STARTED) | Some(LAZY_STARTING) | Some(GOING_TO_SLEEP)
+                );
                 if reason == Some(LAZY_NOT_STARTED) {
                     entry.terminal.update(ctx, |terminal, ctx| {
                         terminal.start_deferred_agent(ctx);
                     });
                 }
+                if reason == Some(GOING_TO_SLEEP) && !target.queue {
+                    return Err(ControlError::new(ErrorCode::TargetStateConflict, "this session is going to sleep and can't take a message until its agent has stopped. Send with --queue to wake it and deliver once it is ready, or retry in a few seconds"));
+                }
                 if lazy && !target.queue {
-                    return Err(ControlError::new(ErrorCode::TargetStateConflict, "this restored tab's agent had not started yet (Clinch starts restored agents when their tab is first shown); it is starting now. Retry in a few seconds, or send with --queue to deliver it once the agent is ready"));
+                    return Err(ControlError::new(ErrorCode::TargetStateConflict, "this session was asleep, with no agent running; it is waking now. Retry in a few seconds, or send with --queue to deliver it once the agent is ready"));
                 }
                 // Report a blocking state before the revision: a revision taken while the agent
                 // was blocked is current, so calling it stale hides the real reason.
@@ -318,17 +326,19 @@ fn probe(
 ) -> Result<Readiness, ControlError> {
     check_bridge(bridge, instance, ctx)?;
     let entry = super::agents::resolve(instance, &message.params.agent_id, ctx)?;
-    if entry
+    let not_started = entry
         .terminal
         .as_ref(ctx)
         .local_control_agent_readiness(ctx)
         .1
-        == Some(LAZY_NOT_STARTED)
-    {
-        entry.terminal.update(ctx, |terminal, ctx| {
+        == Some(LAZY_NOT_STARTED);
+    entry.terminal.update(ctx, |terminal, ctx| {
+        // A message is waiting for this agent, so its tab must not be put to sleep under it.
+        terminal.note_queued_agent_message();
+        if not_started {
             terminal.start_deferred_agent(ctx);
-        });
-    }
+        }
+    });
     let terminal = entry.terminal.as_ref(ctx);
     // A message queued while its agent was starting cannot pin the block that
     // launch replaced; the readiness checks below still hold it for drafts.
@@ -347,6 +357,7 @@ fn probe(
                 "working"
                     | LAZY_NOT_STARTED
                     | LAZY_STARTING
+                    | GOING_TO_SLEEP
                     | "human_input_or_draft"
                     | "status_unavailable"
                     | "submission_pending"

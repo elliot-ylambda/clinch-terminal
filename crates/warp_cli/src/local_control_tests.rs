@@ -551,6 +551,14 @@ fn retained_action_examples() -> Vec<(ActionKind, Vec<&'static str>)> {
             ],
         ),
         (
+            ActionKind::AgentSleep,
+            vec!["warpctrl", "agent", "sleep", "id"],
+        ),
+        (
+            ActionKind::AgentWake,
+            vec!["warpctrl", "agent", "wake", "id"],
+        ),
+        (
             ActionKind::AgentInbox,
             vec!["warpctrl", "agent", "inbox", "--reader", "reader"],
         ),
@@ -1305,6 +1313,8 @@ fn parsed_action_kind(command: &ControlCommand) -> Option<ActionKind> {
             super::agents::AgentCommand::Launch(_) => Some(ActionKind::AgentLaunch),
             super::agents::AgentCommand::Wait(_) => Some(ActionKind::AgentInspect),
             super::agents::AgentCommand::Interrupt { .. } => Some(ActionKind::AgentInterrupt),
+            super::agents::AgentCommand::Sleep(_) => Some(ActionKind::AgentSleep),
+            super::agents::AgentCommand::Wake(_) => Some(ActionKind::AgentWake),
             super::agents::AgentCommand::Inbox { .. } => Some(ActionKind::AgentInbox),
             super::agents::AgentCommand::InboxAck { .. } => Some(ActionKind::AgentInboxAck),
             super::agents::AgentCommand::Events { .. } => Some(ActionKind::AgentEvents),

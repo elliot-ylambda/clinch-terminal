@@ -48,6 +48,18 @@ define_settings_group!(ClinchSettings, settings: [
         toml_path: "clinch.sessions.continue_after_restart",
         description: "After Clinch restarts or updates, tell Claude Code and Codex sessions that were mid-turn to continue where they left off.",
     },
+    // An idle Claude Code tab holds about 700 MB, and a Codex tab keeps its helper processes too,
+    // so dozens of forgotten tabs can fill memory. A tab asleep has no agent process and wakes on
+    // its saved conversation. Zero turns automatic sleep off; the tab menu still sleeps by hand.
+    sleep_idle_agent_tabs_after_hours: ClinchSleepIdleAgentTabsAfterHours {
+        type: u32,
+        default: 2,
+        supported_platforms: SupportedPlatforms::DESKTOP,
+        sync_to_cloud: SyncToCloud::Never,
+        private: false,
+        toml_path: "clinch.sessions.sleep_idle_after_hours",
+        description: "Put Claude Code and Codex tabs to sleep after this many hours without use, to free memory. A tab that is working, waiting on you, or on screen never sleeps. 0 turns this off.",
+    },
     agent_conversation_finder_agent: AgentConversationFinderAgent {
         type: String,
         default: "all".to_string(),
