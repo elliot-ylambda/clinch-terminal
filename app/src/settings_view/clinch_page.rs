@@ -1655,7 +1655,7 @@ impl SettingsWidget for SessionCaptureWidget {
             .finish();
 
         render_body_item::<ClinchSettingsPageAction>(
-            "Claude Code and Codex session capture".into(),
+            "Claude Code, Codex and Devin session capture".into(),
             None,
             LocalOnlyIconState::Hidden,
             ToggleState::Enabled,
@@ -1751,7 +1751,7 @@ impl SettingsWidget for AgentStatusBadgesWidget {
                 })
                 .finish(),
             Some(
-                "Show Claude Code and Codex status on terminal tabs when an agent is working, \
+                "Show Claude Code, Codex and Devin status on terminal tabs when an agent is working, \
                  finished, or needs attention."
                     .into(),
             ),
@@ -1998,7 +1998,7 @@ impl SettingsWidget for ContinueSessionsAfterRestartWidget {
                 })
                 .finish(),
             Some(
-                "When Clinch restarts or updates, Claude Code and Codex sessions that were \
+                "When Clinch restarts or updates, Claude Code, Codex and Devin sessions that were \
                  mid-turn are told to continue, and to check before repeating anything with \
                  outside effects. Typing in the pane first cancels it."
                     .into(),

@@ -1319,6 +1319,12 @@ fn other_agents_keep_their_strategy_at_any_length() {
             )
         );
         assert_eq!(
+            rich_input_submit_strategy(CLIAgent::Devin, text),
+            RichInputSubmitStrategy::BracketedPasteDelayedEnter(
+                CLI_AGENT_BRACKETED_PASTE_ENTER_DELAY
+            )
+        );
+        assert_eq!(
             rich_input_submit_strategy(CLIAgent::OpenCode, text),
             RichInputSubmitStrategy::DelayedEnter
         );

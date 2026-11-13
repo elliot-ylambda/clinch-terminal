@@ -102,7 +102,7 @@ pub enum WorkspaceCommand {
 
 #[derive(Debug, Clone, Subcommand)]
 pub enum AgentCommand {
-    /// Launch Claude/Codex in an exact project; --background preserves focus.
+    /// Launch Claude, Codex or Devin in an exact project; --background preserves focus.
     Launch(AgentLaunchArgs),
     /// Wait for an exact agent state without changing its tab or work.
     Wait(AgentWaitArgs),
@@ -148,7 +148,7 @@ pub enum AgentCommand {
         #[arg(long)]
         follow: bool,
     },
-    /// List Claude/Codex sessions across all projects, or the requested scope.
+    /// List Claude, Codex and Devin sessions across all projects, or the requested scope.
     List(ScopeArgs),
     /// Inspect state, input revision, capabilities, and latest previews.
     Inspect(AgentArgs),
@@ -731,14 +731,7 @@ fn launch(args: AgentLaunchArgs, format: OutputFormat) -> Result<(), ControlErro
                         .flatten()
                         .find(|agent| {
                             agent["pane_id"] == created["pane_id"]
-                                && agent["provider"]
-                                    == (if args.provider
-                                        == local_control::agents::AgentProvider::Claude
-                                    {
-                                        "claude-code"
-                                    } else {
-                                        "codex"
-                                    })
+                                && agent["provider"] == args.provider.listed_name()
                                 && agent["conversation_id"].as_str().is_some()
                         })
                 {

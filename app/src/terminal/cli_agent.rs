@@ -127,7 +127,14 @@ const MISTRAL_ORANGE: ColorU = ColorU {
     a: 255,
 };
 
-/// Represents a CLI agent (e.g., Claude Code, Gemini CLI, Codex, Amp, Droid, OpenCode, Copilot, Pi, Auggie, Cursor, Goose, Hermes, Mistral Vibe)
+pub const DEVIN_COLOR: ColorU = ColorU {
+    r: 26,
+    g: 130,
+    b: 148,
+    a: 255,
+};
+
+/// Represents a CLI agent (e.g., Claude Code, Gemini CLI, Codex, Amp, Droid, OpenCode, Copilot, Pi, Auggie, Cursor, Goose, Hermes, Mistral Vibe, Devin)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Sequence, Serialize, Deserialize)]
 pub enum CLIAgent {
     Claude,
@@ -143,6 +150,7 @@ pub enum CLIAgent {
     Goose,
     Hermes,
     Vibe,
+    Devin,
     /// Represents an unknown/custom CLI agent matched by user-configured regex patterns.
     Unknown,
 }
@@ -164,6 +172,7 @@ impl CLIAgent {
             CLIAgent::Goose => "goose",
             CLIAgent::Hermes => "hermes",
             CLIAgent::Vibe => "vibe",
+            CLIAgent::Devin => "devin",
             CLIAgent::Unknown => "",
         }
     }
@@ -211,8 +220,20 @@ impl CLIAgent {
             CLIAgent::Goose => "Goose",
             CLIAgent::Hermes => "Hermes",
             CLIAgent::Vibe => "Mistral Vibe",
+            CLIAgent::Devin => "Devin",
             CLIAgent::Unknown => "CLI Agent",
         }
+    }
+
+    /// Whether Clinch installs hooks for this agent, so its sessions report their status, can be
+    /// coordinated, and reopen after a restart.
+    pub fn has_clinch_hooks(&self) -> bool {
+        matches!(self, CLIAgent::Claude | CLIAgent::Codex | CLIAgent::Devin)
+    }
+
+    /// Whether Clinch can open this agent's conversation as a fork in a new tab.
+    pub fn supports_fork(&self) -> bool {
+        matches!(self, CLIAgent::Claude | CLIAgent::Codex)
     }
 
     /// Returns the other provider for the supported local conversation-transfer pair.
@@ -244,6 +265,8 @@ impl CLIAgent {
             // still drives the toolbar tile; an `Icon::MistralLogo` can be wired
             // up in a follow-up once an officially licensed SVG is available.
             CLIAgent::Vibe => None,
+            // Recognized without a brand asset, like Vibe: the brand color still drives the tile.
+            CLIAgent::Devin => None,
             CLIAgent::Unknown => None,
         }
     }
@@ -274,6 +297,7 @@ impl CLIAgent {
             CLIAgent::Goose => &[SkillProvider::Agents],
             CLIAgent::Hermes => &[SkillProvider::Agents],
             CLIAgent::Vibe => &[SkillProvider::Agents],
+            CLIAgent::Devin => &[SkillProvider::Agents],
             CLIAgent::Unknown => &[],
         }
     }
@@ -316,6 +340,7 @@ impl CLIAgent {
             CLIAgent::Goose => Some(GOOSE_COLOR),
             CLIAgent::Hermes => Some(HERMES_PURPLE),
             CLIAgent::Vibe => Some(MISTRAL_ORANGE),
+            CLIAgent::Devin => Some(DEVIN_COLOR),
             CLIAgent::Unknown => None,
         }
     }
@@ -619,6 +644,7 @@ impl From<CLIAgent> for CLIAgentType {
             CLIAgent::Goose => CLIAgentType::Goose,
             CLIAgent::Hermes => CLIAgentType::Hermes,
             CLIAgent::Vibe => CLIAgentType::Vibe,
+            CLIAgent::Devin => CLIAgentType::Devin,
             CLIAgent::Unknown => CLIAgentType::Unknown,
         }
     }

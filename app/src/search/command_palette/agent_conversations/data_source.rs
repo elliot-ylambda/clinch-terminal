@@ -46,6 +46,7 @@ pub enum AgentFilter {
     All,
     Claude,
     Codex,
+    Devin,
 }
 
 impl AgentFilter {
@@ -54,6 +55,7 @@ impl AgentFilter {
             Self::All => "All",
             Self::Claude => "Claude",
             Self::Codex => "Codex",
+            Self::Devin => "Devin",
         }
     }
 
@@ -62,6 +64,7 @@ impl AgentFilter {
             Self::All => None,
             Self::Claude => Some(AgentResumeProvider::Claude),
             Self::Codex => Some(AgentResumeProvider::Codex),
+            Self::Devin => Some(AgentResumeProvider::Devin),
         }
     }
 }
@@ -277,9 +280,9 @@ impl SyncDataSource for DataSource {
         // been recorded; a non-matching query keeps the palette's own no-results state.
         if needle.is_empty() && results.is_empty() {
             let message = if self.scope == ScopeFilter::Bookmarked {
-                "No bookmarked conversations — use Bookmark convo in a Claude Code or Codex footer"
+                "No bookmarked conversations — use Bookmark convo in an agent's footer"
             } else {
-                "No recent agent conversations — run claude or codex in a pane to record one"
+                "No recent agent conversations — run claude, codex or devin in a pane to record one"
             };
             results.push(QueryResult::from(SeparatorSearchItem::new(
                 message.to_string(),

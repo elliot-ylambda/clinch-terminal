@@ -22,6 +22,7 @@ use crate::terminal::shell::ShellType;
 pub enum AgentResumeProvider {
     Claude,
     Codex,
+    Devin,
 }
 
 impl AgentResumeProvider {
@@ -43,6 +44,7 @@ impl AgentResumeProvider {
         match self {
             Self::Claude => "claude",
             Self::Codex => "codex",
+            Self::Devin => "devin",
         }
     }
 
@@ -50,6 +52,7 @@ impl AgentResumeProvider {
         match agent {
             "claude" => Some(Self::Claude),
             "codex" => Some(Self::Codex),
+            "devin" => Some(Self::Devin),
             _ => None,
         }
     }
@@ -371,7 +374,7 @@ fn capture_state_file_is_regular(name: &str) -> bool {
         .is_ok_and(|metadata| metadata.file_type().is_file())
 }
 
-/// Returns the persisted Claude/Codex session-capture state.
+/// Returns the persisted agent session-capture state.
 #[cfg(target_os = "macos")]
 pub fn capture_layer_enabled() -> bool {
     capture_state_file_is_regular("enabled")
@@ -497,9 +500,9 @@ pub fn install_bundled_capture_layer() {
     clear_app_terminating_marker();
 
     if let Err(error) = run_capture_installer(command) {
-        eprintln!("clinch: Claude/Codex session-capture {command} failed: {error}");
+        eprintln!("clinch: agent session-capture {command} failed: {error}");
     } else if action == CaptureStartupAction::Enable && !capture_layer_enabled() {
-        eprintln!("clinch: Claude/Codex session capture did not persist its enabled state");
+        eprintln!("clinch: agent session capture did not persist its enabled state");
     }
 }
 
@@ -809,7 +812,7 @@ pub fn resolve_toolbelt_suggestion(suggestion_id: &str, accepted: bool) -> std::
     if !toolbelt_learning_enabled() {
         return Err(std::io::Error::new(
             std::io::ErrorKind::PermissionDenied,
-            "Claude Code and Codex session capture is disabled",
+            "Claude Code, Codex and Devin session capture is disabled",
         ));
     }
     let dir = registry_dir().ok_or_else(|| {
@@ -1302,12 +1305,15 @@ pub fn agent_session_seed_from_restore_command(
 }
 
 /// Extracts the session a user resumes directly through the provider CLI (`codex resume <id>`,
-/// `claude --resume <id>`, `claude -r <id>`). Command detection already settled the provider, so
-/// shell aliases such as `cx resume <id>` resolve too. Without this, a hand-resumed pane stays
-/// anonymous until the agent emits a hook event, which Codex only does on the next prompt.
+/// `claude --resume <id>`, `claude -r <id>`, `devin -r <id>`). Command detection already settled
+/// the provider, so shell aliases such as `cx resume <id>` resolve too. Without this, a
+/// hand-resumed pane stays anonymous until the agent emits a hook event, which Codex only does on
+/// the next prompt.
 ///
-/// Only canonical UUIDs are accepted, so prompt words never pass for an id. Forks are rejected:
-/// they mint a new session, and the parent id would point the pane at the wrong conversation.
+/// Only canonical UUIDs are accepted, so prompt words never pass for an id, except for Devin,
+/// whose ids can be short words and which only reads one straight after its resume flag. Forks
+/// are rejected: they mint a new session, and the parent id would point the pane at the wrong
+/// conversation.
 pub fn session_id_from_direct_resume_command(
     provider: AgentResumeProvider,
     command: &str,
@@ -1330,17 +1336,34 @@ pub fn session_id_from_direct_resume_command(
             if tokens.contains(&"--fork-session") {
                 return None;
             }
-            tokens.iter().enumerate().find_map(|(index, token)| {
-                let id = match token.strip_prefix("--resume=") {
-                    Some(id) => id,
-                    None if matches!(*token, "--resume" | "-r") => {
-                        tokens.get(index + 1).copied()?
-                    }
-                    None => return None,
-                };
-                is_session_uuid(id).then(|| id.to_owned())
+            (0..tokens.len()).find_map(|index| {
+                resume_flag_value(&tokens, index)
+                    .filter(|id| is_session_uuid(id))
+                    .map(str::to_owned)
             })
         }
+        AgentResumeProvider::Devin => {
+            // Everything after `--` is the prompt.
+            let prompt_start = tokens
+                .iter()
+                .position(|token| *token == "--")
+                .unwrap_or(tokens.len());
+            (0..prompt_start).find_map(|index| {
+                resume_flag_value(&tokens, index)
+                    .filter(|id| is_safe_session_id(id))
+                    .map(str::to_owned)
+            })
+        }
+    }
+}
+
+/// The id given by `tokens[index]` when it is `--resume=<id>`, or `--resume`/`-r` before an id.
+fn resume_flag_value<'a>(tokens: &[&'a str], index: usize) -> Option<&'a str> {
+    let token = tokens[index];
+    match token.strip_prefix("--resume=") {
+        Some(id) => Some(id),
+        None if matches!(token, "--resume" | "-r") => tokens.get(index + 1).copied(),
+        None => None,
     }
 }
 
@@ -1600,6 +1623,7 @@ impl AgentConversation {
                 "{} resume {session_id}{flags}",
                 AgentResumeProvider::Codex.launch_command_prefix(true)
             )),
+            "devin" => Some(format!("devin -r {session_id}{flags}")),
             _ => None,
         }
     }
@@ -1823,6 +1847,8 @@ fn collect_conversation_mirrors(
 struct AgentTranscriptRoots {
     claude_projects: Option<PathBuf>,
     codex_sessions: Option<PathBuf>,
+    /// Devin's session store isn't documented, so its history is the log Clinch keeps from hooks.
+    devin_log: Option<PathBuf>,
 }
 
 fn agent_transcript_roots() -> AgentTranscriptRoots {
@@ -1838,6 +1864,7 @@ fn agent_transcript_roots() -> AgentTranscriptRoots {
     AgentTranscriptRoots {
         claude_projects: claude_config.map(|root| root.join("projects")),
         codex_sessions: codex_home.map(|root| root.join("sessions")),
+        devin_log: registry_dir().map(|registry| registry.join("prompts").join("devin")),
     }
 }
 
@@ -1977,6 +2004,7 @@ fn provider_transcript_root(
     match provider {
         AgentResumeProvider::Claude => roots.claude_projects.as_deref(),
         AgentResumeProvider::Codex => roots.codex_sessions.as_deref(),
+        AgentResumeProvider::Devin => roots.devin_log.as_deref(),
     }
 }
 
@@ -2001,6 +2029,7 @@ fn transcript_path_matches_provider(
                     .strip_suffix(".jsonl")
                     .is_some_and(|stem| stem.ends_with(&format!("-{session_id}")))
         }
+        AgentResumeProvider::Devin => file_name == format!("{session_id}.jsonl"),
     }
 }
 
@@ -2043,6 +2072,8 @@ fn prompt_history_from_transcript(
     match provider {
         AgentResumeProvider::Claude => prompt_history_from_claude_transcript(path),
         AgentResumeProvider::Codex => prompt_history_from_codex_transcript(path),
+        // Its only transcript is the prompt log, which the caller has already read.
+        AgentResumeProvider::Devin => AgentPromptHistory::default(),
     }
 }
 

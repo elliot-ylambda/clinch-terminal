@@ -65,7 +65,7 @@ after="$(shasum "$HOME/.claude/settings.json" "$HOME/.codex/config.toml")"
 BIN="$HOME/.warp/agent-resume-bin"
 for file in agent-json agent-json.js clinch-agent-resume clinch_agent_resume_launch clinch_codex_launch \
   claude-capture.sh prompt-mirror.sh claude.zsh codex-session-start.sh \
-  codex-prompt-submit.sh codex-session-end.sh; do
+  codex-prompt-submit.sh codex-session-end.sh devin-hook.sh; do
   [[ -f "$BIN/$file" ]] || { echo "FAIL: installer omitted $file"; exit 1; }
 done
 [[ ! -e "$BIN/install-agent-plugins.sh" ]] \

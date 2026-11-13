@@ -1,9 +1,9 @@
 ---
 name: clinch-control
-description: Control and inspect the running Clinch app from Claude Code or Codex with its local control CLI. Use when the user asks to manipulate Clinch windows, project tabs, layouts, panes, sessions, sidebar sections, toolbelts, or UI surfaces; inspect or search rendered terminal contents across tabs; or launch a long-lived, interactive, or user-visible project process such as a dev server, watcher, REPL, or log tail in a new tab. Do not use for tests, lint, builds, Git commands, or other bounded work the agent can run in its own shell.
+description: Control and inspect the running Clinch app from Claude Code, Codex or Devin with its local control CLI. Use when the user asks to manipulate Clinch windows, project tabs, layouts, panes, sessions, sidebar sections, toolbelts, or UI surfaces; inspect or search rendered terminal contents across tabs; or launch a long-lived, interactive, or user-visible project process such as a dev server, watcher, REPL, or log tail in a new tab. Do not use for tests, lint, builds, Git commands, or other bounded work the agent can run in its own shell.
 ---
 
-<!-- managed-by: Clinch; version: 1.9.0 -->
+<!-- managed-by: Clinch; version: 1.10.0 -->
 
 # Clinch control
 
@@ -186,7 +186,7 @@ move before reading/sending; do not reuse queued-message targets.
 `project export --project PROJECT_ID --file /absolute/layout.json` writes a new file.
 `project restore --file /absolute/layout.json --window WINDOW_ID` creates a new project
 with fresh runtime identities. Add `--resume-agents` only to resume saved local
-Claude/Codex conversation identities. Layouts preserve terminal splits/proportions,
+Claude, Codex and Devin conversation identities. Layouts preserve terminal splits/proportions,
 section order, names, colors, collapse/pin state, tab titles/colors and project tasks.
 They do not capture terminal output, arbitrary running commands, custom shell/profile
 settings, or provider launch flags. Other pane types produce an explicit export error.
@@ -238,7 +238,7 @@ Use exact `--project` on section mutations; section IDs belong to that project.
   --window <window-id>` before and after; never substitute a close action.
 - Use the separately installed `clinch-toolbelt` skill for explicit quick-insert
   button requests. Typed `toolbelt` actions can list, create, delete, and move
-  buttons in the shared Claude Code/Codex coding-agent footer or the independent
+  buttons in the shared coding-agent footer or the independent
   terminal footer.
 - Suggest creating a quick-insert button when the user repeatedly supplies the
   same prompt or command, but wait for confirmation before changing a toolbelt.
@@ -268,6 +268,6 @@ members together. Task IDs stay stable on edit; completing removes the pending
 task, matching the UI. Live `tab transfer` also works between native windows and
 preserves the running process. Rediscover agent IDs after any transfer.
 
-For background Claude/Codex startup, guarded interruption, unread inboxes, bounded
+For background agent startup, guarded interruption, unread inboxes, bounded
 waits, and replayable events, use the `clinch-coordinate` skill. Those CLI controls
 also work for independent sessions without creating a coordinator.

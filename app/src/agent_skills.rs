@@ -151,6 +151,9 @@ struct AgentSkillLocation {
 /// personal skills below its config directory. Codex uses the shared Agent
 /// Skills location at `~/.agents/skills`; `CODEX_HOME` remains the presence
 /// check so Clinch does not create that directory on machines without Codex.
+/// Devin reads the same shared location, so a machine with only Devin gets it
+/// too. `~/.devin` is its presence check because Clinch itself creates
+/// `~/.config/devin` to add its hooks.
 fn agent_skill_locations() -> Vec<AgentSkillLocation> {
     let home = dirs::home_dir();
     let claude = std::env::var_os("CLAUDE_CONFIG_DIR")
@@ -176,6 +179,11 @@ fn agent_skill_locations() -> Vec<AgentSkillLocation> {
             presence_dir,
             install_root: home.join(".agents"),
             legacy_managed_root: Some(legacy_managed_root),
+        });
+        locations.push(AgentSkillLocation {
+            presence_dir: home.join(".devin"),
+            install_root: home.join(".agents"),
+            legacy_managed_root: None,
         });
     }
     locations

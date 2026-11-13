@@ -187,6 +187,7 @@ fn read_path(
         record["id"] = json!(format!("{source}:{record_start}"));
         record["timestamp"] = parsed
             .get("timestamp")
+            .or_else(|| parsed.get("ts"))
             .and_then(Value::as_str)
             .map(|s| json!(bounded_text_at(s, 128).0))
             .unwrap_or(Value::Null);
@@ -219,8 +220,18 @@ fn read_path(
     };
     let next_cursor = base64::engine::general_purpose::URL_SAFE_NO_PAD
         .encode(serde_json::to_vec(&cursor).expect("cursor serialization"));
+    let (source_kind, coverage_detail) = match provider {
+        AgentResumeProvider::Devin => (
+            "clinch_hook_log",
+            "User prompts and final replies only; Devin's tool calls and earlier messages in a turn are not available. Use pane read for what is on screen.",
+        ),
+        AgentResumeProvider::Claude | AgentResumeProvider::Codex => (
+            "provider_transcript",
+            "Supported captured user, assistant, and tool records; images, reasoning, and provider metadata are omitted.",
+        ),
+    };
     Ok(
-        json!({"source": "provider_transcript", "coverage": "partial", "coverage_detail": "Supported captured user, assistant, and tool records; images, reasoning, and provider metadata are omitted.", "records": records, "next_cursor": next_cursor, "has_more": position < metadata.len(), "pending_record": pending, "scan_limit_reached": scan_limit_reached, "malformed_records": malformed, "older_content_omitted": params.tail && (start > 0 || output_truncated), "output_truncated": output_truncated, "bytes_scanned": position - start}),
+        json!({"source": source_kind, "coverage": "partial", "coverage_detail": coverage_detail, "records": records, "next_cursor": next_cursor, "has_more": position < metadata.len(), "pending_record": pending, "scan_limit_reached": scan_limit_reached, "malformed_records": malformed, "older_content_omitted": params.tail && (start > 0 || output_truncated), "output_truncated": output_truncated, "bytes_scanned": position - start}),
     )
 }
 
@@ -236,8 +247,26 @@ fn bounded_text_at(text: &str, max: usize) -> (String, bool) {
     (text[..end].to_owned(), end < text.len())
 }
 
+/// One line of the log Clinch keeps from Devin's hooks. Its session store isn't documented, so this
+/// is the only history to read: each prompt, and each turn's final reply.
+fn devin_log_record(record: &Value) -> Option<Value> {
+    let (role, text) = match (record.get("prompt"), record.get("response")) {
+        (Some(prompt), _) => ("user", prompt.as_str()?),
+        (None, Some(response)) => ("assistant", response.as_str()?),
+        (None, None) => return None,
+    };
+    if text.is_empty() {
+        return None;
+    }
+    let (text, text_truncated) = bounded_text(text);
+    Some(
+        json!({"role": role, "text": text, "text_truncated": text_truncated, "tools": [], "tools_truncated": false}),
+    )
+}
+
 fn normalized_record(provider: AgentResumeProvider, record: &Value) -> Option<Value> {
     let payload = match provider {
+        AgentResumeProvider::Devin => return devin_log_record(record),
         AgentResumeProvider::Claude => record.get("message")?,
         AgentResumeProvider::Codex => {
             // response_item is canonical. event_msg repeats the same messages.

@@ -94,6 +94,7 @@ pub struct AgentResume {
 pub enum ResumeProvider {
     Claude,
     Codex,
+    Devin,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

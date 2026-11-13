@@ -157,12 +157,19 @@ function codexHookFlags() {
 
 function promptLine(argv) {
     const payload = parseObject(readStdin(), "hook payload");
-    const event = asString(payload.hook_event_name, "");
+    // Devin passes the event on its hook's command line rather than relying on the payload.
+    const event = asString(argv[3], "") || asString(payload.hook_event_name, "");
     if (event === "Stop") {
-        return JSON.stringify({
+        const record = {
             ts: asString(argv[0], ""),
             stop: true,
-        });
+        };
+        // Devin's own session store isn't documented, so this log is also where `agent read` finds
+        // its replies. Claude and Codex keep full transcripts, and their logs stay small.
+        if (asString(argv[4], "") === "devin") {
+            record.response = asString(payload.last_assistant_message, "");
+        }
+        return JSON.stringify(record);
     }
     if (event !== "UserPromptSubmit") {
         return "";
@@ -238,7 +245,7 @@ function toolbeltLearn(argv) {
     const provider = asString(argv[1], "");
     const sessionId = asString(argv[2], "");
     const timestamp = asString(argv[3], "");
-    if (!storePath || !/^(?:claude|codex)$/.test(provider) ||
+    if (!storePath || !/^(?:claude|codex|devin)$/.test(provider) ||
             !/^[A-Za-z0-9-]+$/.test(sessionId)) {
         throw new Error("toolbelt-learn requires a store, provider, and safe session id");
     }
@@ -408,21 +415,8 @@ function journalScrub(argv) {
     });
 }
 
-function wireClaude(argv) {
-    const oldCommand = argv[0];
-    const captureCommand = argv[1];
-    if (!oldCommand || !captureCommand) {
-        throw new Error("wire-claude requires old and current hook paths");
-    }
-
-    const settings = parseObject(readStdin(), "Claude settings");
-    if (settings.hooks === null || Array.isArray(settings.hooks) || typeof settings.hooks !== "object") {
-        settings.hooks = {};
-    }
-
-    // Remove every managed legacy/current entry first. That makes the update
-    // idempotent, repairs duplicates, and moves a misplaced managed hook back
-    // to the three supported lifecycle events while preserving unrelated hooks.
+// Drops every hook `isManaged` recognizes, leaving unrelated hooks and their ordering alone.
+function removeManagedHooks(settings, isManaged) {
     Object.keys(settings.hooks).forEach(function (eventName) {
         const groups = settings.hooks[eventName];
         if (!Array.isArray(groups)) {
@@ -439,10 +433,45 @@ function wireClaude(argv) {
                 if (hook === null || Array.isArray(hook) || typeof hook !== "object") {
                     return true;
                 }
-                return hook.command !== oldCommand && hook.command !== captureCommand;
+                return !isManaged(hook);
             });
             return group.hooks.length > 0;
         });
+    });
+}
+
+function hasHooksObject(settings) {
+    return settings.hooks !== null && !Array.isArray(settings.hooks) && typeof settings.hooks === "object";
+}
+
+function removeEmptyHookEvents(settings) {
+    Object.keys(settings.hooks).forEach(function (eventName) {
+        if (Array.isArray(settings.hooks[eventName]) && settings.hooks[eventName].length === 0) {
+            delete settings.hooks[eventName];
+        }
+    });
+    if (Object.keys(settings.hooks).length === 0) {
+        delete settings.hooks;
+    }
+}
+
+function wireClaude(argv) {
+    const oldCommand = argv[0];
+    const captureCommand = argv[1];
+    if (!oldCommand || !captureCommand) {
+        throw new Error("wire-claude requires old and current hook paths");
+    }
+
+    const settings = parseObject(readStdin(), "Claude settings");
+    if (!hasHooksObject(settings)) {
+        settings.hooks = {};
+    }
+
+    // Remove every managed legacy/current entry first. That makes the update
+    // idempotent, repairs duplicates, and moves a misplaced managed hook back
+    // to its supported lifecycle events while preserving unrelated hooks.
+    removeManagedHooks(settings, function (hook) {
+        return hook.command === oldCommand || hook.command === captureCommand;
     });
 
     ["SessionStart", "UserPromptSubmit", "Stop", "SessionEnd"].forEach(function (eventName) {
@@ -465,39 +494,127 @@ function unwireClaude(argv) {
     }
 
     const settings = parseObject(readStdin(), "Claude settings");
-    if (settings.hooks === null || Array.isArray(settings.hooks) || typeof settings.hooks !== "object") {
+    if (!hasHooksObject(settings)) {
         return JSON.stringify(settings, null, 2) + "\n";
     }
-
-    Object.keys(settings.hooks).forEach(function (eventName) {
-        const groups = settings.hooks[eventName];
-        if (!Array.isArray(groups)) {
-            return;
-        }
-        settings.hooks[eventName] = groups.filter(function (group) {
-            if (group === null || Array.isArray(group) || typeof group !== "object") {
-                return true;
-            }
-            if (!Array.isArray(group.hooks)) {
-                return true;
-            }
-            group.hooks = group.hooks.filter(function (hook) {
-                if (hook === null || Array.isArray(hook) || typeof hook !== "object") {
-                    return true;
-                }
-                return hook.command !== oldCommand && hook.command !== captureCommand;
-            });
-            return group.hooks.length > 0;
-        });
-        if (settings.hooks[eventName].length === 0) {
-            delete settings.hooks[eventName];
-        }
+    removeManagedHooks(settings, function (hook) {
+        return hook.command === oldCommand || hook.command === captureCommand;
     });
+    removeEmptyHookEvents(settings);
+    return JSON.stringify(settings, null, 2) + "\n";
+}
 
-    if (Object.keys(settings.hooks).length === 0) {
-        delete settings.hooks;
+const DEVIN_HOOK_NAME = "/devin-hook.sh";
+const DEVIN_HOOK_EVENTS = [
+    "SessionStart",
+    "UserPromptSubmit",
+    "PermissionRequest",
+    "PostToolUse",
+    "PostCompaction",
+    "Stop",
+    "SessionEnd",
+];
+
+function isDevinHook(hook) {
+    return typeof hook.command === "string" && hook.command.indexOf(DEVIN_HOOK_NAME) !== -1;
+}
+
+function shellQuote(text) {
+    return "'" + text.replace(/'/g, "'\\''") + "'";
+}
+
+// Each event names itself on the command line, so a payload without an event name can't be mistaken
+// for a session start. Devin treats a slow hook as an error rather than waiting forever on it, and
+// the timeout keeps a wedged helper from holding up a turn.
+function wireDevin(argv) {
+    const hookPath = argv[0];
+    if (!hookPath) {
+        throw new Error("wire-devin requires the hook path");
+    }
+    const settings = parseObject(readStdin(), "Devin config");
+    if (!hasHooksObject(settings)) {
+        settings.hooks = {};
+    }
+    removeManagedHooks(settings, isDevinHook);
+    DEVIN_HOOK_EVENTS.forEach(function (eventName) {
+        if (!Array.isArray(settings.hooks[eventName])) {
+            settings.hooks[eventName] = [];
+        }
+        settings.hooks[eventName].push({
+            hooks: [{
+                type: "command",
+                command: shellQuote(hookPath) + " " + eventName,
+                timeout: 10,
+            }],
+        });
+    });
+    return JSON.stringify(settings, null, 2) + "\n";
+}
+
+function unwireDevin() {
+    const settings = parseObject(readStdin(), "Devin config");
+    if (hasHooksObject(settings)) {
+        removeManagedHooks(settings, isDevinHook);
+        removeEmptyHookEvents(settings);
     }
     return JSON.stringify(settings, null, 2) + "\n";
+}
+
+function clipped(text, max) {
+    return text.length > max ? text.slice(0, max - 3) + "..." : text;
+}
+
+// The status event for one Devin hook, as the pane's terminal receives it. Text fields are bounded
+// so the event stays one short write. JSON.stringify leaves DEL and the C1 controls raw, and a C1
+// string terminator in a prompt could end the escape sequence carrying this event.
+function devinEvent(argv) {
+    const hookEvent = asString(argv[0], "");
+    const name = {
+        SessionStart: "session_start",
+        UserPromptSubmit: "prompt_submit",
+        PermissionRequest: "permission_request",
+        // `/compact` fires no prompt hooks, only this. Claude Code reports a compaction as a
+        // session start too, which tells Clinch what was typed before it has been handled.
+        PostCompaction: "session_start",
+        Stop: "stop",
+    }[hookEvent];
+    if (!name) {
+        return "";
+    }
+    const payload = parseObject(readStdin(), "hook payload");
+    const cwd = asString(argv[2], "");
+    const event = {
+        v: 1,
+        agent: "devin",
+        event: name,
+        session_id: asString(argv[1], ""),
+        cwd: cwd,
+        project: cwd.split("/").filter(Boolean).pop() || "",
+    };
+    if (name === "prompt_submit") {
+        event.query = clipped(asString(payload.prompt, ""), 200);
+    } else if (name === "stop") {
+        event.response = clipped(asString(payload.last_assistant_message, ""), 200);
+    } else if (name === "permission_request") {
+        const input = payload.tool_input;
+        const fields = input !== null && typeof input === "object" ? input : {};
+        const preview = asString(fields.command, "") || asString(fields.file_path, "")
+            || clipped(JSON.stringify(fields), 80);
+        event.tool_name = clipped(asString(payload.tool_name, "unknown"), 80);
+        event.summary = clipped("Wants to run " + event.tool_name + ": " + preview, 160);
+    }
+    return JSON.stringify(event).replace(/[\u007f-\u009f]/g, function (c) {
+        return "\\u" + ("0000" + c.charCodeAt(0).toString(16)).slice(-4);
+    });
+}
+
+function devinSessionContext(argv) {
+    return JSON.stringify({
+        hookSpecificOutput: {
+            hookEventName: "SessionStart",
+            additionalContext: asString(argv[0], ""),
+        },
+    });
 }
 
 // Return one pane's journaled writes newest-first. Fields are base64 encoded and
@@ -521,7 +638,7 @@ function paneHistory(argv) {
             return;
         }
         const match = row.command.match(
-            /(?:clinch|warp)_agent_resume_launch\s+(claude|codex)\s+([A-Za-z0-9-]+)/,
+            /(?:clinch|warp)_agent_resume_launch\s+(claude|codex|devin)\s+([A-Za-z0-9-]+)/,
         );
         if (!match || match[1] !== agent) {
             return;
@@ -638,7 +755,7 @@ function listConversations(argv) {
                 typeof row.command !== "string") {
             return;
         }
-        const match = row.command.match(/(?:clinch|warp)_agent_resume_launch\s+(claude|codex)\s+([A-Za-z0-9-]+)/);
+        const match = row.command.match(/(?:clinch|warp)_agent_resume_launch\s+(claude|codex|devin)\s+([A-Za-z0-9-]+)/);
         if (match) {
             observe(match[2], row.ts, row.cwd, row.bridge, match[1]);
             if (row.op === "scrub-bridge") {
@@ -677,6 +794,7 @@ function listConversations(argv) {
     // layout and cannot overwrite a scoped source for the same session id.
     readPromptDirectory(promptsDirectory + "/claude", "claude", 2);
     readPromptDirectory(promptsDirectory + "/codex", "codex", 2);
+    readPromptDirectory(promptsDirectory + "/devin", "devin", 2);
     readPromptDirectory(promptsDirectory, "claude", 1);
 
     const conversations = Object.keys(sessions)
@@ -739,6 +857,14 @@ function run(argv) {
         return wireClaude(argv);
     case "unwire-claude":
         return unwireClaude(argv);
+    case "wire-devin":
+        return wireDevin(argv);
+    case "unwire-devin":
+        return unwireDevin();
+    case "devin-event":
+        return devinEvent(argv);
+    case "devin-session-context":
+        return devinSessionContext(argv);
     case "registry-entry":
         return registryEntry(argv);
     case "registry-fields":

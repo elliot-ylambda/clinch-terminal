@@ -1,10 +1,11 @@
-//! The project coordinator: a Claude Code or Codex session that starts pinned first in each
+//! The project coordinator: a Claude Code, Codex or Devin session that starts pinned first in each
 //! project's tab list. It starts in the project's primary checkout (never a linked worktree),
-//! falling back to the home directory, and carries coordinator instructions as a system prompt so
-//! creating one never spends a turn.
+//! falling back to the home directory, and carries coordinator instructions that spend no turn: a
+//! system prompt where the agent has one, otherwise its session-start hook.
 
 use std::path::{Path, PathBuf};
 
+use base64::Engine as _;
 use blocking::unblock;
 use settings::Setting;
 use warp_core::user_preferences::GetUserPreferences as _;
@@ -23,10 +24,10 @@ pub(super) const COORDINATOR_TAB_TITLE: &str = "Coordinator";
 
 const COORDINATOR_INSTRUCTIONS: &str = "You are the Clinch coordinator for this project, a \
 session pinned first in its tab list. When the user asks about their other sessions, use the \
-clinch-coordinate skill to inspect, summarise and send instructions to the Claude Code and Codex \
-sessions open in Clinch. Messages that start with [Clinch auto-coordinate] come from Clinch, not \
-the user: handle them as the skill's Auto-coordinate section describes. Do not edit files in \
-this checkout unless the user asks you to.";
+clinch-coordinate skill to inspect, summarise and send instructions to the Claude Code, Codex and \
+Devin sessions open in Clinch. Messages that start with [Clinch auto-coordinate] come from \
+Clinch, not the user: handle them as the skill's Auto-coordinate section describes. Do not edit \
+files in this checkout unless the user asks you to.";
 
 const RESTORE_EXACT_PREFIX: &str = "CLINCH_AGENT_RESTORE_EXACT=1 ";
 
@@ -41,30 +42,32 @@ pub(crate) enum CoordinatorBootstrap {
     Resolving,
 }
 
-/// Arguments that give an agent its coordinator role without spending a turn.
-fn coordinator_role_args(provider: AgentResumeProvider) -> String {
+/// Gives `command` its coordinator role without spending a turn.
+fn with_coordinator_role(provider: AgentResumeProvider, command: &str) -> String {
     match provider {
         AgentResumeProvider::Claude => format!(
-            "--append-system-prompt {}",
+            "{command} --append-system-prompt {}",
             shell_words::quote(COORDINATOR_INSTRUCTIONS)
         ),
         AgentResumeProvider::Codex => {
             // Codex parses `-c` values as TOML, and a JSON string literal is a TOML basic string.
             let value = serde_json::Value::from(COORDINATOR_INSTRUCTIONS).to_string();
             format!(
-                "-c {}",
+                "{command} -c {}",
                 shell_words::quote(&format!("developer_instructions={value}"))
             )
         }
+        // Devin has no system prompt flag, so its SessionStart hook passes the role on. Base64
+        // keeps this one word: restored commands are read by splitting on spaces.
+        AgentResumeProvider::Devin => format!(
+            "CLINCH_COORDINATOR_ROLE={} {command}",
+            base64::engine::general_purpose::STANDARD.encode(COORDINATOR_INSTRUCTIONS)
+        ),
     }
 }
 
 pub(crate) fn coordinator_launch_command(provider: AgentResumeProvider) -> String {
-    format!(
-        "{} {}",
-        provider.launch_command_prefix(true),
-        coordinator_role_args(provider)
-    )
+    with_coordinator_role(provider, provider.launch_command_prefix(true))
 }
 
 /// The command a restored coordinator pane replays. A saved conversation resumes with the role
@@ -84,9 +87,9 @@ pub(crate) fn coordinator_restore_command(
         .and_then(|command| {
             let (provider, _) =
                 crate::agent_resume::agent_session_seed_from_restore_command(command)?;
-            Some(format!(
-                "CLINCH_AGENT_RESTORE_FRESH=1 {command} {}",
-                coordinator_role_args(provider)
+            Some(with_coordinator_role(
+                provider,
+                &format!("CLINCH_AGENT_RESTORE_FRESH=1 {command}"),
             ))
         })
         .unwrap_or_else(|| coordinator_launch_command(default_provider))
@@ -348,16 +351,17 @@ impl Workspace {
         );
     }
 
-    /// Restarts the coordinator with the other agent in the same directory, and remembers it as
-    /// the default for new coordinators.
-    pub(super) fn switch_coordinator_agent(&mut self, index: usize, ctx: &mut ViewContext<Self>) {
+    /// Restarts the coordinator with another agent in the same directory, and remembers it as the
+    /// default for new coordinators.
+    pub(super) fn switch_coordinator_agent(
+        &mut self,
+        index: usize,
+        provider: AgentResumeProvider,
+        ctx: &mut ViewContext<Self>,
+    ) {
         if !self.tabs.get(index).is_some_and(|tab| tab.coordinator) {
             return;
         }
-        let provider = match self.coordinator_provider(index, ctx) {
-            AgentResumeProvider::Claude => AgentResumeProvider::Codex,
-            AgentResumeProvider::Codex => AgentResumeProvider::Claude,
-        };
         let directory = self.tabs[index]
             .pane_group
             .as_ref(ctx)
@@ -406,18 +410,23 @@ impl Workspace {
         ctx: &AppContext,
     ) -> Vec<MenuItem<WorkspaceAction>> {
         if self.tabs.get(index).is_some_and(|tab| tab.coordinator) {
-            let label = match self.coordinator_provider(index, ctx) {
-                AgentResumeProvider::Claude => "Switch coordinator to Codex",
-                AgentResumeProvider::Codex => "Switch coordinator to Claude",
-            };
-            return vec![
-                MenuItemFields::new(label)
-                    .with_on_select_action(WorkspaceAction::SwitchCoordinatorAgent(index))
-                    .into_item(),
+            let current = self.coordinator_provider(index, ctx);
+            let mut items: Vec<_> = coordinator_switch_targets(current, devin_is_installed())
+                .into_iter()
+                .map(|(label, provider)| {
+                    MenuItemFields::new(label)
+                        .with_on_select_action(WorkspaceAction::SwitchCoordinatorAgent(
+                            index, provider,
+                        ))
+                        .into_item()
+                })
+                .collect();
+            items.push(
                 MenuItemFields::new("Turn coordinator off")
                     .with_on_select_action(WorkspaceAction::SetCoordinatorOn(false))
                     .into_item(),
-            ];
+            );
+            return items;
         }
         if self.coordinator_tab_index().is_none() {
             return vec![MenuItemFields::new("New coordinator session")
@@ -478,6 +487,37 @@ pub(super) fn set_coordinator_enabled(enabled: bool, ctx: &mut AppContext) {
             log::error!("Error persisting the coordinator setting: {error}");
         }
     });
+}
+
+/// The agents a coordinator running `current` can switch to. Devin is offered only where it's
+/// installed, because the choice becomes the default for every new coordinator.
+pub(crate) fn coordinator_switch_targets(
+    current: AgentResumeProvider,
+    devin_installed: bool,
+) -> Vec<(&'static str, AgentResumeProvider)> {
+    [
+        ("Switch coordinator to Claude", AgentResumeProvider::Claude),
+        ("Switch coordinator to Codex", AgentResumeProvider::Codex),
+        ("Switch coordinator to Devin", AgentResumeProvider::Devin),
+    ]
+    .into_iter()
+    .filter(|(_, provider)| {
+        *provider != current && (*provider != AgentResumeProvider::Devin || devin_installed)
+    })
+    .collect()
+}
+
+/// Whether the Devin CLI is in a place its installers use. The app's own PATH can't say: one
+/// started from Finder inherits a minimal PATH.
+fn devin_is_installed() -> bool {
+    let home_install = dirs::home_dir().map(|home| home.join(".local/bin/devin"));
+    home_install
+        .into_iter()
+        .chain([
+            PathBuf::from("/opt/homebrew/bin/devin"),
+            PathBuf::from("/usr/local/bin/devin"),
+        ])
+        .any(|path| path.exists())
 }
 
 /// Persists the agent that new coordinators start.

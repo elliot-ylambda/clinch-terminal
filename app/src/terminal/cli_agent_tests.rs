@@ -264,6 +264,13 @@ fn test_detect_known_agents() {
                 ("agent", CLIAgent::CursorCli),
                 ("goose", CLIAgent::Goose),
                 ("vibe", CLIAgent::Vibe),
+                ("devin", CLIAgent::Devin),
+                ("devin --model opus -- fix it", CLIAgent::Devin),
+                ("devin -r brisk-otter", CLIAgent::Devin),
+                (
+                    "clinch_agent_resume_launch devin brisk-otter",
+                    CLIAgent::Devin,
+                ),
             ] {
                 assert_eq!(
                     CLIAgent::detect(command, None, None, ctx),
@@ -661,4 +668,18 @@ fn test_detect_aifx_agent_run_claude_wrong_team() {
             );
         });
     });
+}
+
+#[test]
+fn clinch_hooks_cover_the_agents_it_installs_them_for() {
+    assert!(CLIAgent::Claude.has_clinch_hooks());
+    assert!(CLIAgent::Codex.has_clinch_hooks());
+    assert!(CLIAgent::Devin.has_clinch_hooks());
+    assert!(!CLIAgent::Gemini.has_clinch_hooks());
+    assert!(!CLIAgent::Unknown.has_clinch_hooks());
+    // Devin only forks from inside a session, so Clinch has no command to open one in a new tab.
+    assert!(!CLIAgent::Devin.supports_fork());
+    assert!(CLIAgent::Claude.supports_fork());
+    assert!(CLIAgent::Codex.supports_fork());
+    assert_eq!(CLIAgent::Devin.transfer_target(), None);
 }

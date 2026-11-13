@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Manages Clinch's local Claude Code / Codex session-capture integration.
+# Manages Clinch's local Claude Code / Codex / Devin session-capture integration.
 # No command means no mutation. The app invokes `enable --quiet` on first launch, `repair --quiet`
 # while enabled, and neither command after the user explicitly disables the setting.
 set -euo pipefail
@@ -8,7 +8,7 @@ usage() {
   cat <<'EOF'
 usage: install.sh <enable|repair|disable|status|purge> [--quiet]
 
-  enable   Install Clinch-owned helpers and add managed Claude/Codex hooks.
+  enable   Install Clinch-owned helpers and add managed Claude/Codex/Devin hooks.
   repair   Refresh managed files only while session capture is enabled.
   disable  Remove managed hooks and helpers, remember the opt-out, and keep captured metadata.
   status   Print enabled or disabled without changing anything.
@@ -52,6 +52,7 @@ DISABLED="$STATE/disabled"
 RECEIPT="$STATE/receipt"
 CLAUDE_CFG="${CLINCH_CLAUDE_SETTINGS:-$HOME/.claude/settings.json}"
 CODEX_CFG="${CLINCH_CODEX_CONFIG:-$HOME/.codex/config.toml}"
+DEVIN_CFG="${CLINCH_DEVIN_CONFIG:-$HOME/.config/devin/config.json}"
 
 sha_or_absent() {
   if [[ -f "$1" ]]; then
@@ -83,6 +84,7 @@ install_runtime() {
     "$SRC/codex-session-start.sh" \
     "$SRC/codex-prompt-submit.sh" \
     "$SRC/codex-session-end.sh" \
+    "$SRC/devin-hook.sh" \
     "$BIN/"
   install -m 0644 "$SRC/agent-json.js" "$SRC/claude.zsh" "$BIN/"
   install -m 0755 "$SRC/clinch_agent_resume_launch" "$BIN/warp_agent_resume_launch"
@@ -95,7 +97,7 @@ remove_runtime() {
     agent-json agent-json.js clinch-agent-resume warp-agent-resume \
     clinch_agent_resume_launch warp_agent_resume_launch clinch_codex_launch claude-capture.sh \
     prompt-mirror.sh claude-session-start.sh claude.zsh codex-session-start.sh \
-    codex-prompt-submit.sh codex-session-end.sh \
+    codex-prompt-submit.sh codex-session-end.sh devin-hook.sh \
     install-agent-plugins.sh wire-claude-hooks.sh unwire-claude-hooks.sh; do
     rm -f "$BIN/$name"
   done
@@ -202,6 +204,17 @@ write_codex_config() {
   } >> "$output"
 }
 
+# Devin's config may hold comments, which this JSON rewrite can't keep. Leaving that file alone
+# costs only Devin's status and restore: it must not stop Claude and Codex from being set up.
+write_devin_config() {
+  local output="$1"
+  if [[ -f "$DEVIN_CFG" ]]; then
+    "$SRC/agent-json" wire-devin "$BIN/devin-hook.sh" < "$DEVIN_CFG" > "$output" 2>/dev/null
+  else
+    printf '{}' | "$SRC/agent-json" wire-devin "$BIN/devin-hook.sh" > "$output" 2>/dev/null
+  fi
+}
+
 apply_staged_file() {
   local staged="$1" destination="$2" mode="$3"
   mkdir -p "$(dirname "$destination")"
@@ -216,6 +229,7 @@ apply_staged_file() {
 
 write_receipt() {
   local claude_pre_sha="$1" claude_pre_mode="$2" codex_pre_sha="$3" codex_pre_mode="$4"
+  local devin_pre_sha="$5" devin_pre_mode="$6"
   local tmp="$STATE/.receipt.$$"
   mkdir -p "$STATE"
   chmod 700 "$STATE"
@@ -235,6 +249,11 @@ write_receipt() {
     printf 'codex_pre_mode=%s\n' "$codex_pre_mode"
     printf 'codex_post_sha256=%s\n' "$(sha_or_absent "$CODEX_CFG")"
     printf 'codex_post_mode=%s\n' "$(mode_or_absent "$CODEX_CFG")"
+    printf 'devin_config=%s\n' "$DEVIN_CFG"
+    printf 'devin_pre_sha256=%s\n' "$devin_pre_sha"
+    printf 'devin_pre_mode=%s\n' "$devin_pre_mode"
+    printf 'devin_post_sha256=%s\n' "$(sha_or_absent "$DEVIN_CFG")"
+    printf 'devin_post_mode=%s\n' "$(mode_or_absent "$DEVIN_CFG")"
   } > "$tmp"
   chmod 600 "$tmp"
   mv "$tmp" "$RECEIPT"
@@ -253,14 +272,17 @@ write_state_marker() {
 
 configure_integration() {
   local is_first_enable="$1"
-  local tx claude_mode codex_mode claude_pre_sha codex_pre_sha
+  local tx claude_mode codex_mode devin_mode claude_pre_sha codex_pre_sha devin_pre_sha
+  local devin_ready=1
   tx="$(mktemp -d -t clinch-agent-enable)"
   trap 'rm -rf "$tx"' RETURN
 
   claude_mode="$(mode_or_absent "$CLAUDE_CFG")"
   codex_mode="$(mode_or_absent "$CODEX_CFG")"
+  devin_mode="$(mode_or_absent "$DEVIN_CFG")"
   claude_pre_sha="$(sha_or_absent "$CLAUDE_CFG")"
   codex_pre_sha="$(sha_or_absent "$CODEX_CFG")"
+  devin_pre_sha="$(sha_or_absent "$DEVIN_CFG")"
 
   if [[ -f "$CLAUDE_CFG" ]]; then
     "$SRC/agent-json" wire-claude \
@@ -272,13 +294,21 @@ configure_integration() {
       > "$tx/claude.json"
   fi
   write_codex_config "$tx/codex.toml"
+  if ! write_devin_config "$tx/devin.json"; then
+    devin_ready=0
+    warn "could not add hooks to $DEVIN_CFG; it isn't plain JSON, so Devin tabs won't report status or restore"
+  fi
 
   install_runtime
   apply_staged_file "$tx/claude.json" "$CLAUDE_CFG" "$claude_mode"
   apply_staged_file "$tx/codex.toml" "$CODEX_CFG" "$codex_mode"
+  if (( devin_ready )); then
+    apply_staged_file "$tx/devin.json" "$DEVIN_CFG" "$devin_mode"
+  fi
 
   if [[ "$is_first_enable" == "1" || ! -f "$RECEIPT" ]]; then
-    write_receipt "$claude_pre_sha" "$claude_mode" "$codex_pre_sha" "$codex_mode"
+    write_receipt "$claude_pre_sha" "$claude_mode" "$codex_pre_sha" "$codex_mode" \
+      "$devin_pre_sha" "$devin_mode"
   fi
   write_state_marker enabled
   rm -f "$DISABLED"
@@ -319,6 +349,23 @@ disable_integration() {
     fi
   fi
 
+  if [[ -f "$DEVIN_CFG" ]]; then
+    tmp="$(mktemp "$(dirname "$DEVIN_CFG")/.clinch-devin.XXXXXX")"
+    mode="$(mode_or_absent "$DEVIN_CFG")"
+    if "$SRC/agent-json" unwire-devin < "$DEVIN_CFG" > "$tmp" 2>/dev/null; then
+      # Hooks are all most machines without Devin will have here, so leave no empty file behind.
+      if [[ "$(tr -d '[:space:]' < "$tmp")" == "{}" ]]; then
+        rm -f "$tmp" "$DEVIN_CFG"
+        rmdir "$(dirname "$DEVIN_CFG")" 2>/dev/null || true
+      else
+        apply_staged_file "$tmp" "$DEVIN_CFG" "$mode"
+      fi
+    else
+      # A config Clinch never could parse holds none of its hooks.
+      rm -f "$tmp"
+    fi
+  fi
+
   remove_runtime
   if (( failures )); then
     return 1
@@ -343,6 +390,7 @@ case "$COMMAND" in
 Clinch will add clearly marked hooks to:
   $CLAUDE_CFG
   $CODEX_CFG
+  $DEVIN_CFG
 and install helper commands in:
   $BIN
 Captured session metadata will be stored in:
