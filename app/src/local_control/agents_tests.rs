@@ -144,7 +144,46 @@ fn discovers_inactive_projects_and_rejects_replaced_conversations() {
             })
         });
         app.read(|ctx| assert!(resolve(&instance, &first, ctx).is_err()));
+
+        // A Devin tab is listed and addressable like the others: this is what lets a coordinator
+        // send it a prompt at all.
+        app.update(|ctx| {
+            CLIAgentSessionsModel::handle(ctx).update(ctx, |sessions, ctx| {
+                let mut devin = sessions.session(terminals[0].id()).unwrap().clone();
+                devin.agent = CLIAgent::Devin;
+                devin.session_context.session_id = Some("brisk-otter".into());
+                sessions.set_session(terminals[0].id(), devin, ctx);
+            })
+        });
+        app.read(|ctx| {
+            let listed = super::snapshot(&instance, &AgentScope::default(), ctx).unwrap();
+            assert_eq!(listed.agents.len(), 2);
+            let devin = listed
+                .agents
+                .iter()
+                .find(|agent| agent.data["provider"] == "devin")
+                .expect("Devin is listed");
+            assert_eq!(devin.data["conversation_id"], "brisk-otter");
+            assert_eq!(devin.data["state"], "turn_complete");
+            assert_eq!(devin.data["state_source"], "provider_notifications");
+            assert_eq!(devin.provider, AgentResumeProvider::Devin);
+            let id = devin.data["agent_id"].as_str().unwrap();
+            assert!(resolve(&instance, id, ctx).is_ok());
+        });
     });
+}
+
+#[test]
+fn devin_launches_with_its_prompt_as_one_argument() {
+    use ::local_control::agents::AgentProvider;
+    assert_eq!(provider_launch_command(AgentProvider::Devin, None), "devin");
+    assert_eq!(
+        provider_launch_command(AgentProvider::Devin, Some("fix the 'login' page")),
+        format!("devin -- {}", shell_words::quote("fix the 'login' page"))
+    );
+    assert_eq!("devin".parse(), Ok(AgentProvider::Devin));
+    assert_eq!(AgentProvider::Devin.listed_name(), "devin");
+    assert_eq!(AgentProvider::Claude.listed_name(), "claude-code");
 }
 
 #[cfg(unix)]

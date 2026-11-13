@@ -94,7 +94,7 @@ pub struct NotificationsSettings {
     #[schemars(description = "Whether to play a sound with notifications.")]
     pub play_notification_sound: bool,
 
-    #[schemars(description = "Whether to show CLI-agent (Claude/Codex) status badges on tabs.")]
+    #[schemars(description = "Whether to show CLI-agent status badges on tabs.")]
     pub show_agent_status_on_tabs: bool,
 }
 

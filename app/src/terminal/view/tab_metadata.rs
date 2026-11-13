@@ -8,7 +8,7 @@ use crate::terminal::cli_agent_sessions::title_glyph::{
     agent_title_text, shows_working, standardize_agent_title,
 };
 use crate::terminal::cli_agent_sessions::{CLIAgentSession, CLIAgentSessionsModel};
-use crate::terminal::{CLIAgent, TerminalView};
+use crate::terminal::TerminalView;
 
 impl TerminalView {
     pub const LINKED_WORKTREE_LABEL: &'static str = "Worktree";
@@ -124,11 +124,11 @@ impl TerminalView {
     }
 
     /// The agent's own terminal title without its status glyph, for chrome that shows status
-    /// separately. `None` when the pane runs no Claude Code or Codex session.
+    /// separately. `None` when the pane runs no agent Clinch has hooks for.
     pub(crate) fn agent_title_without_status(&self, ctx: &AppContext) -> Option<String> {
         let session = CLIAgentSessionsModel::as_ref(ctx)
             .session(self.view_id)
-            .filter(|session| matches!(session.agent, CLIAgent::Claude | CLIAgent::Codex))?;
+            .filter(|session| session.agent.has_clinch_hooks())?;
         let raw_title = self.terminal_title_from_shell();
         let text = agent_title_text(session.agent, &raw_title).trim();
         let text = if text.is_empty() {

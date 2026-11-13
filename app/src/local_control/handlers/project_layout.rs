@@ -142,6 +142,7 @@ fn export_pane(node: PaneNodeSnapshot) -> Result<PaneLayout, ControlError> {
                     provider: match provider {
                         AgentResumeProvider::Claude => ResumeProvider::Claude,
                         AgentResumeProvider::Codex => ResumeProvider::Codex,
+                        AgentResumeProvider::Devin => ResumeProvider::Devin,
                     },
                     conversation_id,
                 });
@@ -154,7 +155,7 @@ fn export_pane(node: PaneNodeSnapshot) -> Result<PaneLayout, ControlError> {
         }
         PaneNodeSnapshot::Leaf(_) => Err(ControlError::new(
             ErrorCode::UnsupportedAction,
-            "portable project export currently supports terminal and Claude/Codex panes; this project also contains another pane type",
+            "portable project export currently supports terminal, Claude, Codex and Devin panes; this project also contains another pane type",
         )),
     }
 }
@@ -369,6 +370,7 @@ fn restore_pane(
                         match resume.provider {
                             ResumeProvider::Claude => "claude",
                             ResumeProvider::Codex => "codex",
+                            ResumeProvider::Devin => "devin",
                         },
                         id
                     ))

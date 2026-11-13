@@ -1,22 +1,22 @@
 ---
 name: clinch-coordinate
-description: Coordinates Claude Code and Codex sessions across Clinch projects and sections using the local CLI. Use when the user wants one conversation to inspect other sessions, summarize progress, send delegated instructions, or organize reviews and deployments across sessions.
+description: Coordinates Claude Code, Codex and Devin sessions across Clinch projects and sections using the local CLI. Use when the user wants one conversation to inspect other sessions, summarize progress, send delegated instructions, or organize reviews and deployments across sessions.
 ---
 
-<!-- managed-by: Clinch; version: 1.11.0 -->
+<!-- managed-by: Clinch; version: 1.12.0 -->
 
 # Clinch coordination
 
 Use the app's authenticated local CLI. Scope can span every open project and
 section. Each project can keep a **Coordinator** tab pinned first in its tab list,
 started in the project's primary checkout (never a linked worktree). It is an
-ordinary Claude or Codex conversation using these commands, and any other
+ordinary Claude, Codex or Devin conversation using these commands, and any other
 conversation can coordinate the same way. Users switch its agent from the tab's
 right-click menu; closing it turns the default off until they choose "New
 coordinator session" from a tab's right-click menu. Its **Auto** switch lets
 Clinch wake it when sessions change; see Auto-coordinate below.
 
-Independent chats are the default; coordination is optional. Ordinary Claude/Codex
+Independent chats are the default; coordination is optional. Ordinary agent
 sessions need no coordinator or worker registration to run. Use this workflow only
 when the user wants coordination, and keep it within their requested scope. Discovery
 alone does not enroll or control a session. Users can add coordination later, keep
@@ -102,8 +102,10 @@ filters when continuing a cursor. Agent reads normalize supported captured user,
 assistant, and tool transcript records. Images, reasoning, and provider metadata
 are omitted. Report `coverage`, truncation, and unavailable sources honestly;
 `preview_only` is not full conversation history. A partial final JSONL record
-can need another read after the provider flushes it. Terminal reads are bounded
-ANSI snapshots of retained output, not complete conversation history.
+can need another read after the provider flushes it. A Devin session reads as its
+prompts and each turn's final reply only: use `pane read` to see what it is doing
+now. Terminal reads are bounded ANSI snapshots of retained output, not complete
+conversation history.
 
 Watch polls once per second and returns a changed snapshot or timeout. It can
 miss intermediate states and cannot replay events. `--follow` streams NDJSON;
@@ -151,7 +153,7 @@ This is not terminal-output capture or a guarantee of every transient readiness
 state. Historical scope filters can include closed project/section IDs.
 
 Wait supports `ready`, `working`, `attention`, and `turn-complete`; inspect its
-`matched`/`timed_out` result. Launch supports `claude` or `codex`, optional `--section`,
+`matched`/`timed_out` result. Launch supports `claude`, `codex` or `devin`, optional `--section`,
 `--cwd`, `--title`, `--prompt`/`--prompt-file`, and `--timeout` (default 30 seconds).
 Always use `--background` for delegated workers unless the user wants activation.
 Creation and readiness are separate: retain returned tab/pane IDs after timeout

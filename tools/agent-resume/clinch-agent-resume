@@ -9,7 +9,7 @@ now_utc() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 decode64() { printf '%s' "$1" | /usr/bin/base64 -D 2>/dev/null; }
 
 valid_uuid() { [[ "${1:-}" =~ ^[A-Za-z0-9-]+$ ]]; }
-valid_agent() { [[ "${1:-}" == "claude" || "${1:-}" == "codex" ]]; }
+valid_agent() { [[ "${1:-}" == "claude" || "${1:-}" == "codex" || "${1:-}" == "devin" ]]; }
 
 entry_fields() {
   [[ -f "$1" ]] || return 1
@@ -18,7 +18,7 @@ entry_fields() {
 
 parse_launch_command() {
   local command_str="$1"
-  if [[ "$command_str" =~ ^(clinch|warp)_agent_resume_launch[[:space:]]+(claude|codex)[[:space:]]+([A-Za-z0-9-]+)($|[[:space:]]) ]]; then
+  if [[ "$command_str" =~ ^(clinch|warp)_agent_resume_launch[[:space:]]+(claude|codex|devin)[[:space:]]+([A-Za-z0-9-]+)($|[[:space:]]) ]]; then
     PARSED_AGENT="${BASH_REMATCH[2]}"
     PARSED_SESSION="${BASH_REMATCH[3]}"
     return 0
@@ -39,6 +39,8 @@ session_resumable() {
         -name "*-$sid.jsonl" -print -quit 2>/dev/null)"
       [[ -n "$f" ]] && grep -Eq '"role":"(user|assistant)"' "$f"
       ;;
+    # Devin's session store isn't documented, so Clinch's own prompt log is the evidence.
+    devin) grep -q '"prompt"' "$DIR/prompts/devin/$sid.jsonl" 2>/dev/null ;;
     *) return 1 ;;
   esac
 }
@@ -46,32 +48,55 @@ session_resumable() {
 agent_comm() {
   local name="${1##*/}"
   name="${name#-}"
-  [[ "$name" == "claude" || "$name" == "codex" ]]
+  [[ "$name" == "claude" || "$name" == "codex" || "$name" == "devin" ]]
+}
+
+# True when an agent process is the direct child of the same agent and so part of one session:
+# Devin's screen runs its agent as a `devin acp` child, and hooks run beneath that child.
+# Devin started from inside Devin goes through a shell, so it still counts as nested.
+same_session_agent() {
+  local child="${1##*/}" parent="${2##*/}"
+  [[ "${child#-}" == devin && "${parent#-}" == devin ]]
 }
 
 # Print the nearest owning agent PID and tty. Hooks are children of the owning CLI, so one
-# Claude/Codex ancestor is expected; two means this CLI was launched beneath another agent.
+# agent ancestor is expected; two means this CLI was launched beneath another agent.
 # The persisted owner also closes the detached-child gap: a reparented tool can lose its
 # agent ancestor, but it still cannot displace a different live owner recorded for the pane.
 hook_owner_fields() {
-  local pid ppid comm tty hops=0 count=0 owner_pid=""
+  local pid ppid comm tty hops=0 count=0 owner_pid="" child_agent=""
   if [[ -n "${WARP_AGENT_RESUME_FAKE_ANCESTRY+x}" ]]; then
     local part
     IFS=',' read -ra parts <<<"$WARP_AGENT_RESUME_FAKE_ANCESTRY"
     for part in "${parts[@]}"; do
-      agent_comm "$part" && count=$((count + 1))
+      if agent_comm "$part"; then
+        same_session_agent "$child_agent" "$part" || count=$((count + 1))
+        child_agent="$part"
+      else
+        child_agent=""
+      fi
     done
     (( count == 1 )) || return 1
     owner_pid="${WARP_AGENT_RESUME_FAKE_OWNER_PID:-$PPID}"
     tty="${WARP_AGENT_RESUME_FAKE_TTY:-ttys-test}"
   else
+    local child_pid=""
     pid="$PPID"
     while [[ -n "$pid" && "$pid" -gt 1 && "$hops" -lt 32 ]]; do
       comm="$(/bin/ps -o comm= -p "$pid" 2>/dev/null | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
       if agent_comm "$comm"; then
-        count=$((count + 1))
-        [[ -n "$owner_pid" ]] || owner_pid="$pid"
+        if same_session_agent "$child_agent" "$comm"; then
+          # The outer process is the one the person started, and the one `-r` replaces.
+          [[ "$owner_pid" == "$child_pid" ]] && owner_pid="$pid"
+        else
+          count=$((count + 1))
+          [[ -n "$owner_pid" ]] || owner_pid="$pid"
+        fi
+        child_agent="$comm"
+      else
+        child_agent=""
       fi
+      child_pid="$pid"
       (( count > 1 )) && return 1
       ppid="$(/bin/ps -o ppid= -p "$pid" 2>/dev/null | tr -d '[:space:]')"
       [[ -n "$ppid" && "$ppid" != "$pid" ]] || break
@@ -199,7 +224,7 @@ build_live_map() {
   while read -r pid elapsed comm; do
     comm="${comm##*/}"
     comm="${comm#-}"
-    case "$comm" in claude|codex) provider="$comm" ;; *) continue ;; esac
+    case "$comm" in claude|codex|devin) provider="$comm" ;; *) continue ;; esac
     process_has_agent_ancestor "$pid" && continue
     uuid="$(/bin/ps eww -p "$pid" -o command= 2>/dev/null \
       | tr ' ' '\n' \

@@ -241,13 +241,9 @@ fn render_project_agent_hover_card(
 
     if agents.is_empty() {
         content.add_child(
-            Text::new_inline(
-                "No Claude Code or Codex tabs open".to_string(),
-                font_family,
-                11.,
-            )
-            .with_color(sub_text_color)
-            .finish(),
+            Text::new_inline("No agent tabs open".to_string(), font_family, 11.)
+                .with_color(sub_text_color)
+                .finish(),
         );
     } else {
         content.add_child(

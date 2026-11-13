@@ -135,6 +135,7 @@ verify_app() {
     "$app/Contents/Resources/agent-resume/codex-session-start.sh" \
     "$app/Contents/Resources/agent-resume/codex-prompt-submit.sh" \
     "$app/Contents/Resources/agent-resume/codex-session-end.sh" \
+    "$app/Contents/Resources/agent-resume/devin-hook.sh" \
     "$app/Contents/Resources/bin/clinch_agent_resume_launch" \
     "$app/Contents/Resources/bin/clinch_codex_launch" \
     "$app/Contents/Resources/bin/warp_agent_resume_launch" \

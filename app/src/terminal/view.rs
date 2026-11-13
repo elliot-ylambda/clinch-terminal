@@ -2695,6 +2695,9 @@ pub struct TerminalView {
     /// When the latest keystroke or Clinch submission reached the agent, if the provider has
     /// not acknowledged a prompt or session start since.
     coordination_unacked_input_at: Option<Instant>,
+    /// When the latest write ending in Enter reached the pane. Devin reports a finished `/compact`
+    /// as a session start, which can arrive after keys typed while it ran, and those stay unsent.
+    coordination_last_enter_at: Option<Instant>,
     coordination_send_pending: bool,
     /// Starts this restored pane's agent (`claude --resume …`). Set only for panes
     /// restored at launch. The app-wide restore queue admits two starts at a time.
@@ -3120,6 +3123,70 @@ fn cli_agent_history_menu_item_fields(
             CLI_AGENT_HISTORY_ITEM_VERTICAL_PADDING,
             CLI_AGENT_HISTORY_ITEM_HORIZONTAL_PADDING,
         )
+}
+
+/// What a write into an agent's pane means for the check that it holds no unsent text.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum UnackedInput {
+    /// The write may have left text behind.
+    Mark,
+    /// The write leaves what was already there.
+    Keep,
+    /// The write leaves no text at all.
+    Clear,
+}
+
+impl UnackedInput {
+    fn apply(self, current: Option<Instant>) -> Option<Instant> {
+        match self {
+            Self::Mark => Some(Instant::now()),
+            Self::Keep => current,
+            Self::Clear => None,
+        }
+    }
+}
+
+/// Whether every key that may have left text came before the latest Enter, so nothing typed since
+/// is still waiting in the input box.
+fn input_submitted_before_last_enter(
+    unacked_at: Option<Instant>,
+    last_enter_at: Option<Instant>,
+) -> bool {
+    unacked_at.is_none_or(|typed| last_enter_at.is_some_and(|enter| typed <= enter))
+}
+
+/// Clinch reads Claude's and Codex's input boxes from the screen, so any write can wait for that
+/// check. Devin's can't be read yet, so nothing but its next prompt would clear a write marked
+/// here, and a keystroke that leaves no text must not lock coordination out until then.
+/// `devin_status` is the session's status when the pane runs Devin.
+fn coordination_unacked_input_after(
+    devin_status: Option<&CLIAgentSessionStatus>,
+    bytes: &[u8],
+    is_keyboard_input: bool,
+) -> UnackedInput {
+    let Some(status) = devin_status else {
+        return UnackedInput::Mark;
+    };
+    if !is_keyboard_input {
+        // A mouse report only navigates.
+        return UnackedInput::Keep;
+    }
+    if bytes == [escape_sequences::C0::ETX] {
+        // Ctrl+C clears Devin's draft, or cancels its turn when there is none.
+        return UnackedInput::Clear;
+    }
+    if bytes == b"\r" {
+        // Enter adds no text. It submits what was typed, which the prompt hook then clears, or does
+        // nothing in an empty box, which people press it on too.
+        return UnackedInput::Keep;
+    }
+    if matches!(status, CLIAgentSessionStatus::Blocked { .. })
+        || is_cli_agent_interrupt_sequence(bytes)
+    {
+        // A permission prompt takes these keys, and Esc only cancels the turn.
+        return UnackedInput::Keep;
+    }
+    UnackedInput::Mark
 }
 
 /// Whether a PTY write represents a user interrupt gesture for a CLI agent turn.
@@ -4543,7 +4610,7 @@ impl TerminalView {
             dropdown.set_menu_header_text_provider(move |_, app| {
                 let Some(session) = CLIAgentSessionsModel::as_ref(app)
                     .session(terminal_view_id)
-                    .filter(|session| matches!(session.agent, CLIAgent::Claude | CLIAgent::Codex))
+                    .filter(|session| session.agent.has_clinch_hooks())
                 else {
                     return String::new();
                 };
@@ -4800,6 +4867,7 @@ impl TerminalView {
             coordination_input_epoch: 0,
             coordination_user_input_epoch: 0,
             coordination_unacked_input_at: None,
+            coordination_last_enter_at: None,
             coordination_send_pending: false,
             deferred_agent_start: None,
             background_agent_restore: false,
@@ -9725,6 +9793,13 @@ impl TerminalView {
         self.write_user_bytes_to_pty_with_options(bytes, track_cli_agent_interrupt, true, ctx);
     }
 
+    fn devin_session_status<'a>(&self, ctx: &'a AppContext) -> Option<&'a CLIAgentSessionStatus> {
+        CLIAgentSessionsModel::as_ref(ctx)
+            .session(self.view_id)
+            .filter(|session| session.agent == CLIAgent::Devin)
+            .map(|session| &session.status)
+    }
+
     fn write_user_bytes_to_pty_with_options(
         &mut self,
         bytes: Cow<'static, [u8]>,
@@ -9756,7 +9831,15 @@ impl TerminalView {
         // so this is a no-op for that path.
         self.coordination_user_input_epoch = self.coordination_user_input_epoch.wrapping_add(1);
         self.coordination_input_epoch = self.coordination_input_epoch.wrapping_add(1);
-        self.coordination_unacked_input_at = Some(Instant::now());
+        self.coordination_unacked_input_at = coordination_unacked_input_after(
+            self.devin_session_status(ctx),
+            &bytes,
+            cancels_auto_continue,
+        )
+        .apply(self.coordination_unacked_input_at);
+        if bytes.ends_with(b"\r") {
+            self.coordination_last_enter_at = Some(Instant::now());
+        }
         if cancels_auto_continue {
             self.cancel_auto_continue_on_user_input(ctx);
         }
@@ -13535,15 +13618,26 @@ impl TerminalView {
 
         // Subsequent events are applied by the listener, but input acknowledgement must
         // also reach this view; otherwise every submission would wait for the composer check.
-        if matches!(
-            notification.event,
-            CLIAgentEventType::PromptSubmit | CLIAgentEventType::SessionStart
-        ) && CLIAgentSessionsModel::as_ref(ctx)
-            .session(self.view_id)
-            .is_some_and(|session| {
-                session.agent == notification.agent
-                    && session.session_context.session_id == notification.session_id
-            })
+        let acknowledges = match notification.event {
+            CLIAgentEventType::PromptSubmit => true,
+            // Devin also reports a finished `/compact` this way, so only what was submitted with
+            // Enter before it is handled.
+            CLIAgentEventType::SessionStart => {
+                notification.agent != CLIAgent::Devin
+                    || input_submitted_before_last_enter(
+                        self.coordination_unacked_input_at,
+                        self.coordination_last_enter_at,
+                    )
+            }
+            _ => false,
+        };
+        if acknowledges
+            && CLIAgentSessionsModel::as_ref(ctx)
+                .session(self.view_id)
+                .is_some_and(|session| {
+                    session.agent == notification.agent
+                        && session.session_context.session_id == notification.session_id
+                })
         {
             self.coordination_unacked_input_at = None;
             self.coordination_input_epoch = self.coordination_input_epoch.wrapping_add(1);

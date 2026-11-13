@@ -9305,14 +9305,9 @@ fn exercise_local_control_send(
         let completed = Arc::new(std::sync::Mutex::new(None));
         let callback = completed.clone();
         terminal.update(&mut app, |view, ctx| {
-            view.model.lock().simulate_long_running_block(
-                if agent == CLIAgent::Claude {
-                    "claude"
-                } else {
-                    "codex"
-                },
-                "",
-            );
+            view.model
+                .lock()
+                .simulate_long_running_block(agent.command_prefix(), "");
             CLIAgentSessionsModel::handle(ctx).update(ctx, |sessions, ctx| {
                 let mut session = cli_agent_session_with_prompts(Vec::new());
                 session.agent = agent;
@@ -9342,8 +9337,9 @@ fn exercise_local_control_send(
                 view.write_user_bytes_to_pty(b"x".to_vec(), ctx);
             }
         });
+        // Long enough for the slowest strategy's wait before Enter.
         assert_eventually!(
-            completed.lock().unwrap().is_some(),
+            100 => completed.lock().unwrap().is_some(),
             "submission callback should resolve"
         );
         assert_eq!(*completed.lock().unwrap(), Some(!intervening_input));
@@ -9395,6 +9391,179 @@ fn local_control_send_codex_uses_bracketed_paste_and_enter() {
 }
 
 #[test]
+#[cfg(feature = "local_tty")]
+fn local_control_send_devin_marks_text_as_a_paste_then_presses_enter() {
+    let text = "first line\nsecond line";
+    let marked = [BRACKETED_PASTE_START, text.as_bytes(), BRACKETED_PASTE_END].concat();
+    exercise_local_control_send(CLIAgent::Devin, text.into(), marked, false);
+}
+
+#[test]
+#[cfg(feature = "local_tty")]
+fn local_control_send_devin_stops_enter_after_human_input() {
+    let marked = [BRACKETED_PASTE_START, b"hello", BRACKETED_PASTE_END].concat();
+    exercise_local_control_send(CLIAgent::Devin, "hello".into(), marked, true);
+}
+
+/// Applies one hook event as a pane's listener would, after the first event has registered it.
+fn apply_agent_event(
+    view: &TerminalView,
+    event: serde_json::Value,
+    ctx: &mut ViewContext<TerminalView>,
+) {
+    let event = parse_event(Some(CLI_AGENT_NOTIFICATION_SENTINEL), &event.to_string()).unwrap();
+    let view_id = view.view_id;
+    CLIAgentSessionsModel::handle(ctx).update(ctx, |sessions, ctx| {
+        sessions.update_from_event(view_id, &event, ctx);
+    });
+}
+
+#[test]
+fn devin_hook_events_drive_status_and_readiness() {
+    App::test((), |mut app| async move {
+        initialize_app_for_terminal_view(&mut app);
+        app.update(crate::remote_control::register);
+        let terminal = add_window_with_terminal(&mut app, None);
+        terminal.update(&mut app, |view, ctx| {
+            view.model.lock().simulate_long_running_block("devin", "");
+            let reason = |view: &TerminalView, ctx: &ViewContext<TerminalView>| {
+                view.local_control_agent_readiness(ctx).1
+            };
+            let event = |name: &str| {
+                serde_json::json!({"v": 1, "agent": "devin", "event": name, "session_id": "brisk-otter"})
+            };
+
+            view.handle_cli_agent_notification(
+                Some(CLI_AGENT_NOTIFICATION_SENTINEL),
+                &event("session_start").to_string(),
+                ctx,
+            );
+            let session = CLIAgentSessionsModel::as_ref(ctx).session(view.view_id).unwrap();
+            assert_eq!(session.agent, CLIAgent::Devin);
+            assert!(session.supports_rich_status());
+            assert_eq!(
+                session.session_key().unwrap().provider,
+                crate::agent_resume::AgentResumeProvider::Devin
+            );
+            assert_eq!(reason(view, ctx), None, "a started session takes messages");
+            assert!(view.agent_composer_is_empty(ctx), "restart continue waits on this");
+            assert!(!view.agent_is_mid_turn(ctx));
+
+            apply_agent_event(view, event("prompt_submit"), ctx);
+            assert_eq!(reason(view, ctx), Some("working"));
+            assert!(view.agent_is_mid_turn(ctx), "a restart must continue this turn");
+
+            apply_agent_event(view, event("permission_request"), ctx);
+            assert_eq!(
+                reason(view, ctx),
+                Some("interactive_attention_required"),
+                "a message must never answer a permission prompt"
+            );
+            assert!(view.agent_is_mid_turn(ctx));
+
+            apply_agent_event(view, event("tool_complete"), ctx);
+            assert_eq!(reason(view, ctx), Some("working"));
+
+            // Devin runs Claude Code's hooks by default, so Claude's plugin could report here too.
+            apply_agent_event(
+                view,
+                serde_json::json!({"v": 1, "agent": "claude", "event": "stop", "session_id": "brisk-otter"}),
+                ctx,
+            );
+            assert_eq!(reason(view, ctx), Some("working"), "another agent's event was applied");
+
+            apply_agent_event(view, event("stop"), ctx);
+            assert_eq!(reason(view, ctx), None);
+            assert!(!view.agent_is_mid_turn(ctx));
+        });
+    });
+}
+
+#[test]
+fn devin_keystrokes_that_leave_no_text_keep_it_writable() {
+    let working = CLIAgentSessionStatus::InProgress;
+    let blocked = CLIAgentSessionStatus::Blocked {
+        message: Some("exec".to_owned()),
+    };
+    let effect = coordination_unacked_input_after;
+
+    // Answering a permission prompt, or pressing Esc, can't be left waiting for the next prompt.
+    assert_eq!(effect(Some(&blocked), b"y", true), UnackedInput::Keep);
+    assert_eq!(effect(Some(&blocked), b"\r", true), UnackedInput::Keep);
+    assert_eq!(effect(Some(&working), b"\x1b", true), UnackedInput::Keep);
+    assert_eq!(
+        effect(Some(&working), b"\x1b[27u", true),
+        UnackedInput::Keep
+    );
+    // Scrolling doesn't touch the input box, and Ctrl+C leaves it empty.
+    assert_eq!(
+        effect(Some(&working), b"\x1b[<64;1;1M", false),
+        UnackedInput::Keep
+    );
+    assert_eq!(effect(Some(&working), b"\x03", true), UnackedInput::Clear);
+    // Enter on an empty box leaves nothing, and after typed text the prompt hook clears it.
+    assert_eq!(effect(Some(&working), b"\r", true), UnackedInput::Keep);
+    // Typing is still a possible draft.
+    assert_eq!(effect(Some(&working), b"h", true), UnackedInput::Mark);
+    assert_eq!(
+        effect(Some(&working), b"/compact", true),
+        UnackedInput::Mark
+    );
+
+    // Claude and Codex have a screen check to settle any write, so nothing changes for them.
+    for (bytes, keyboard) in [
+        (b"y".as_slice(), true),
+        (b"\r", true),
+        (b"\x03", true),
+        (b"\x1b[<64;1;1M", false),
+    ] {
+        assert_eq!(effect(None, bytes, keyboard), UnackedInput::Mark);
+    }
+}
+
+/// With no hook events, as when Devin's config has comments Clinch won't rewrite, nothing may type
+/// into a session whose state can't be seen.
+#[test]
+fn devin_without_hook_events_refuses_messages() {
+    App::test((), |mut app| async move {
+        initialize_app_for_terminal_view(&mut app);
+        app.update(crate::remote_control::register);
+        let terminal = add_window_with_terminal(&mut app, None);
+        terminal.update(&mut app, |view, ctx| {
+            view.model.lock().simulate_long_running_block("devin", "");
+            CLIAgentSessionsModel::handle(ctx).update(ctx, |sessions, ctx| {
+                let mut session = cli_agent_session_with_prompts(Vec::new());
+                session.agent = CLIAgent::Devin;
+                session.session_context.session_id = None;
+                session.received_rich_notification = false;
+                session.input_state = CLIAgentInputState::Closed;
+                session.draft_text = None;
+                sessions.set_session(view.view_id, session, ctx);
+            });
+            assert_eq!(
+                view.local_control_agent_readiness(ctx).1,
+                Some("unknown_conversation")
+            );
+            assert!(!view.agent_composer_is_empty(ctx));
+
+            CLIAgentSessionsModel::handle(ctx).update(ctx, |sessions, ctx| {
+                let mut session = cli_agent_session_with_prompts(Vec::new());
+                session.agent = CLIAgent::Devin;
+                session.session_context.session_id = Some("brisk-otter".into());
+                session.received_rich_notification = false;
+                session.input_state = CLIAgentInputState::Closed;
+                session.draft_text = None;
+                sessions.set_session(view.view_id, session, ctx);
+            });
+            assert_eq!(
+                view.local_control_agent_readiness(ctx).1,
+                Some("status_unavailable")
+            );
+        });
+    });
+}
+
+#[test]
 fn local_control_input_acknowledgement_reaches_an_existing_listener() {
     App::test((), |mut app| async move {
         initialize_app_for_terminal_view(&mut app);
@@ -9415,6 +9584,57 @@ fn local_control_input_acknowledgement_reaches_an_existing_listener() {
             assert!(view.coordination_unacked_input_at.is_some());
         });
     });
+}
+
+/// Devin's `/compact` fires no prompt hooks, only a compaction hook that Clinch hears as a session
+/// start. That settles the command, but not keys typed while the compaction ran.
+#[test]
+fn devin_compaction_settles_only_input_submitted_before_it() {
+    App::test((), |mut app| async move {
+        initialize_app_for_terminal_view(&mut app);
+        let terminal = add_window_with_terminal(&mut app, None);
+        terminal.update(&mut app, |view, ctx| {
+            view.model.lock().simulate_long_running_block("devin", "");
+            let start = serde_json::json!({"v": 1, "agent": "devin", "event": "session_start", "session_id": "brisk-otter"}).to_string();
+            view.handle_cli_agent_notification(Some(CLI_AGENT_NOTIFICATION_SENTINEL), &start, ctx);
+            assert!(CLIAgentSessionsModel::as_ref(ctx).session(view.view_id).unwrap().listener.is_some());
+
+            view.write_user_bytes_to_pty(b"/compact".to_vec(), ctx);
+            view.write_user_bytes_to_pty(b"\r".to_vec(), ctx);
+            assert!(view.coordination_unacked_input_at.is_some());
+            view.handle_cli_agent_notification(Some(CLI_AGENT_NOTIFICATION_SENTINEL), &start, ctx);
+            assert!(view.coordination_unacked_input_at.is_none(), "the command was handled");
+
+            view.write_user_bytes_to_pty(b"/compact".to_vec(), ctx);
+            view.write_user_bytes_to_pty(b"\r".to_vec(), ctx);
+            view.write_user_bytes_to_pty(b"next idea".to_vec(), ctx);
+            view.handle_cli_agent_notification(Some(CLI_AGENT_NOTIFICATION_SENTINEL), &start, ctx);
+            assert!(
+                view.coordination_unacked_input_at.is_some(),
+                "text typed during the compaction is still unsent"
+            );
+        });
+    });
+}
+
+#[test]
+fn input_settles_only_when_typed_before_the_last_enter() {
+    let earlier = Instant::now();
+    let later = earlier + Duration::from_millis(5);
+    assert!(input_submitted_before_last_enter(None, None));
+    assert!(input_submitted_before_last_enter(
+        Some(earlier),
+        Some(later)
+    ));
+    assert!(input_submitted_before_last_enter(
+        Some(earlier),
+        Some(earlier)
+    ));
+    assert!(!input_submitted_before_last_enter(
+        Some(later),
+        Some(earlier)
+    ));
+    assert!(!input_submitted_before_last_enter(Some(earlier), None));
 }
 
 /// An idle Claude pane coordination can write to, on a 24×120 alternate screen.

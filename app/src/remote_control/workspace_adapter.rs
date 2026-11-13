@@ -2352,6 +2352,8 @@ fn recent_agent_session_snapshots() -> Vec<RecentAgentSessionSnapshot> {
             let provider = match AgentResumeProvider::from_agent_name(&conversation.agent)? {
                 AgentResumeProvider::Claude => AgentProvider::ClaudeCode,
                 AgentResumeProvider::Codex => AgentProvider::Codex,
+                // The phone app only knows how to reopen Claude and Codex conversations.
+                AgentResumeProvider::Devin => return None,
             };
             let title = conversation
                 .first_prompt

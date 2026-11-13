@@ -1117,11 +1117,7 @@ fn cli_agent_registry_poll_provider(
         return None;
     }
 
-    match session.agent {
-        crate::terminal::CLIAgent::Claude => Some(crate::agent_resume::AgentResumeProvider::Claude),
-        crate::terminal::CLIAgent::Codex => Some(crate::agent_resume::AgentResumeProvider::Codex),
-        _ => None,
-    }
+    crate::terminal::cli_agent_sessions::provider_for_agent(session.agent)
 }
 
 #[derive(Clone, Copy)]
@@ -1369,7 +1365,7 @@ pub struct Workspace {
 }
 
 fn is_in_progress_project_agent(agent: CLIAgent, shows_working: bool) -> bool {
-    matches!(agent, CLIAgent::Claude | CLIAgent::Codex) && shows_working
+    agent.has_clinch_hooks() && shows_working
 }
 
 fn is_running_project_command(
@@ -23300,7 +23296,7 @@ impl Workspace {
         counts
     }
 
-    /// Claude Code and Codex panes shown in the project-tab hover card.
+    /// Panes running an agent Clinch has hooks for, shown in the project-tab hover card.
     ///
     /// Titles follow the same pane and tab title sources used by vertical tabs. Attention-first
     /// ordering makes it possible to scan several projects without first opening each one.
@@ -23320,7 +23316,7 @@ impl Workspace {
                 let Some(session) = sessions.session(terminal_view.id()) else {
                     continue;
                 };
-                if !matches!(session.agent, CLIAgent::Claude | CLIAgent::Codex) {
+                if !session.agent.has_clinch_hooks() {
                     continue;
                 }
 
@@ -26082,7 +26078,9 @@ impl TypedActionView for Workspace {
             CloseTabsAboveGroup(group_id) => self.close_tabs_above_group(*group_id, ctx),
             CloseTabsBelowGroup(group_id) => self.close_tabs_below_group(*group_id, ctx),
             PinTab(tab_index) => self.pin_tab(*tab_index, ctx),
-            SwitchCoordinatorAgent(tab_index) => self.switch_coordinator_agent(*tab_index, ctx),
+            SwitchCoordinatorAgent(tab_index, provider) => {
+                self.switch_coordinator_agent(*tab_index, *provider, ctx)
+            }
             OpenCoordinatorSession => self.open_coordinator_from_menu(ctx),
             SetAutoCoordinate(enabled) => self.set_auto_coordinate(*enabled, ctx),
             SetCoordinatorTactic { tactic, enabled } => {

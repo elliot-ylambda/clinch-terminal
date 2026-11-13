@@ -103,6 +103,7 @@ if [ "$(uname -s)" = "Darwin" ]; then
     "$AGENT_RESUME_SRC/codex-session-start.sh" \
     "$AGENT_RESUME_SRC/codex-prompt-submit.sh" \
     "$AGENT_RESUME_SRC/codex-session-end.sh" \
+    "$AGENT_RESUME_SRC/devin-hook.sh" \
     "$AGENT_RESUME_SRC/wire-claude-hooks.sh" \
     "$AGENT_RESUME_SRC/unwire-claude-hooks.sh" \
     "$AGENT_RESUME_SRC/install.sh" \

@@ -134,3 +134,38 @@ fn filters_before_tail_and_page_limits_and_binds_cursor_filters() {
         ErrorCode::InvalidParams
     );
 }
+
+#[test]
+fn devin_log_reads_as_prompts_and_final_replies() {
+    let mut file = tempfile::NamedTempFile::new().unwrap();
+    for line in [
+        json!({"ts": "2026-11-04T01:00:00Z", "cwd": "/repo", "bridge": "", "prompt": "fix it"}),
+        json!({"ts": "2026-11-04T01:00:09Z", "stop": true, "response": "fixed"}),
+        // A turn that ended without a reply, and the marker the log writes when it fills up.
+        json!({"ts": "2026-11-04T01:00:10Z", "stop": true, "response": ""}),
+        json!({"ts": "2026-11-04T01:00:11Z", "truncated": true}),
+    ] {
+        writeln!(file, "{line}").unwrap();
+    }
+    let mut request = params();
+    request.limit = 10;
+    let result = read_path(file.path(), AgentResumeProvider::Devin, &request).unwrap();
+    let records = result["records"].as_array().unwrap();
+    assert_eq!(records.len(), 2);
+    assert_eq!(records[0]["role"], "user");
+    assert_eq!(records[0]["text"], "fix it");
+    assert_eq!(records[0]["timestamp"], "2026-11-04T01:00:00Z");
+    assert_eq!(records[1]["role"], "assistant");
+    assert_eq!(records[1]["text"], "fixed");
+    assert_eq!(result["coverage"], "partial");
+    assert_eq!(result["source"], "clinch_hook_log");
+    assert!(result["coverage_detail"]
+        .as_str()
+        .unwrap()
+        .contains("final replies only"));
+
+    request.role = Some(::local_control::agents::AgentRole::Assistant);
+    let replies = read_path(file.path(), AgentResumeProvider::Devin, &request).unwrap();
+    assert_eq!(replies["records"].as_array().unwrap().len(), 1);
+    assert_eq!(replies["records"][0]["text"], "fixed");
+}

@@ -23,7 +23,7 @@ use watcher::HomeDirectoryWatcher;
 
 use super::coordinator::{
     coordinator_directory, coordinator_launch_command, coordinator_restore_command,
-    CoordinatorBootstrap,
+    coordinator_switch_targets, CoordinatorBootstrap,
 };
 use super::*;
 use crate::agent_resume::AgentResumeProvider;
@@ -7232,6 +7232,57 @@ fn coordinator_commands_carry_the_role_and_restore_fresh() {
 }
 
 #[test]
+fn a_devin_coordinator_carries_its_role_in_one_word_so_restore_can_read_it() {
+    use base64::Engine as _;
+
+    let launch = coordinator_launch_command(AgentResumeProvider::Devin);
+    let (role, command) = launch.split_once(' ').unwrap();
+    assert_eq!(command, "devin");
+    let role = role.strip_prefix("CLINCH_COORDINATOR_ROLE=").unwrap();
+    let role = base64::engine::general_purpose::STANDARD
+        .decode(role)
+        .unwrap();
+    assert!(String::from_utf8(role)
+        .unwrap()
+        .contains("clinch-coordinate"));
+
+    let restored = coordinator_restore_command(
+        Some("CLINCH_AGENT_RESTORE_EXACT=1 clinch_agent_resume_launch devin brisk-otter --model opus"),
+        AgentResumeProvider::Claude,
+    );
+    assert!(
+        restored.starts_with("CLINCH_COORDINATOR_ROLE="),
+        "{restored}"
+    );
+    assert!(
+        restored.ends_with(
+            " CLINCH_AGENT_RESTORE_FRESH=1 clinch_agent_resume_launch devin brisk-otter --model opus"
+        ),
+        "{restored}"
+    );
+    assert_eq!(
+        crate::agent_resume::agent_session_seed_from_restore_command(&restored),
+        Some((AgentResumeProvider::Devin, "brisk-otter".to_owned()))
+    );
+}
+
+#[test]
+fn a_coordinator_offers_every_other_agent_and_devin_only_where_installed() {
+    let providers = |current, devin_installed| {
+        coordinator_switch_targets(current, devin_installed)
+            .into_iter()
+            .map(|(_, provider)| provider)
+            .collect::<Vec<_>>()
+    };
+    use AgentResumeProvider::{Claude, Codex, Devin};
+    assert_eq!(providers(Claude, false), [Codex]);
+    assert_eq!(providers(Claude, true), [Codex, Devin]);
+    assert_eq!(providers(Codex, true), [Claude, Devin]);
+    assert_eq!(providers(Devin, true), [Claude, Codex]);
+    assert_eq!(providers(Devin, false), [Claude, Codex]);
+}
+
+#[test]
 fn coordinator_starts_in_the_primary_checkout_of_a_linked_worktree() {
     let temp = TempDir::new().unwrap();
     let repo = temp.path().join("repo");
@@ -7379,7 +7430,10 @@ fn switching_the_coordinator_agent_keeps_it_first_and_remembers_the_choice() {
             workspace.tabs[0].pane_group.id()
         });
         workspace.update(&mut app, |workspace, ctx| {
-            workspace.handle_action(&WorkspaceAction::SwitchCoordinatorAgent(0), ctx);
+            workspace.handle_action(
+                &WorkspaceAction::SwitchCoordinatorAgent(0, AgentResumeProvider::Codex),
+                ctx,
+            );
             assert_eq!(workspace.tabs.len(), 2);
             assert_eq!(workspace.coordinator_tab_index(), Some(0));
             assert!(workspace.tabs[0].pinned);

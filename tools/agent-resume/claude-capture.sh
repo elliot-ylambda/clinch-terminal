@@ -159,6 +159,9 @@ _clinch_agent_resume_entry_protected() {
 _clinch_agent_resume_capture_main() {
   set -uo pipefail
   [[ -n "${WARP_TERMINAL_SESSION_UUID:-}" ]] || return 0   # only act inside a Clinch pane
+  # Devin also runs Claude Code's hooks by default. It has its own hook, and this one would log its
+  # prompts as Claude's or, under a Claude pane, replace that tab's restore target with its session.
+  [[ -z "${DEVIN_PROJECT_DIR:-}" ]] || return 0
   local payload fields sid64 cwd64 event64 pmode64 model64 reason64
   local sid cwd event pmode model extra mode_part model_part argv entry_file BIN nested=0
   local owner_fields owner_pid owner_tty64 owner_tty

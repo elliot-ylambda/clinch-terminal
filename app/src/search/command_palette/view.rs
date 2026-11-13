@@ -381,7 +381,12 @@ impl View {
 
         let agent_conversation_agent_control = ctx.add_typed_action_view(|ctx| {
             SegmentedControl::new(
-                vec![AgentFilter::All, AgentFilter::Claude, AgentFilter::Codex],
+                vec![
+                    AgentFilter::All,
+                    AgentFilter::Claude,
+                    AgentFilter::Codex,
+                    AgentFilter::Devin,
+                ],
                 |filter, is_selected, app| {
                     let appearance = Appearance::as_ref(app);
                     let theme = appearance.theme();
@@ -395,6 +400,7 @@ impl View {
                         AgentFilter::All => None,
                         AgentFilter::Claude => Some(CLIAgent::Claude),
                         AgentFilter::Codex => Some(CLIAgent::Codex),
+                        AgentFilter::Devin => Some(CLIAgent::Devin),
                     };
                     let icon_path = cli_agent
                         .and_then(|agent| agent.icon())

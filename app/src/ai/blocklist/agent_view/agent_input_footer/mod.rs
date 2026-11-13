@@ -1909,7 +1909,10 @@ impl AgentInputFooter {
                 Some(ChildView::new(&self.file_explorer_button).finish())
             }
             AgentToolbarItemKind::Compact => Some(ChildView::new(&self.compact_button).finish()),
-            AgentToolbarItemKind::ForkSession => Some(ChildView::new(&self.fork_button).finish()),
+            AgentToolbarItemKind::ForkSession => CLIAgentSessionsModel::as_ref(app)
+                .session(self.terminal_view_id)
+                .is_some_and(|session| session.agent.supports_fork())
+                .then(|| ChildView::new(&self.fork_button).finish()),
             AgentToolbarItemKind::BookmarkConversation => {
                 Some(ChildView::new(&self.bookmark_conversation_button).finish())
             }

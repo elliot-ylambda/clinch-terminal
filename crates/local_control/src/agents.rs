@@ -163,12 +163,23 @@ impl std::str::FromStr for AgentRole {
 pub enum AgentProvider {
     Claude,
     Codex,
+    Devin,
 }
 impl AgentProvider {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Claude => "claude",
             Self::Codex => "codex",
+            Self::Devin => "devin",
+        }
+    }
+
+    /// The name `agent list` reports for this provider's sessions.
+    pub fn listed_name(self) -> &'static str {
+        match self {
+            Self::Claude => "claude-code",
+            Self::Codex => "codex",
+            Self::Devin => "devin",
         }
     }
 }
@@ -178,7 +189,8 @@ impl std::str::FromStr for AgentProvider {
         match value {
             "claude" => Ok(Self::Claude),
             "codex" => Ok(Self::Codex),
-            _ => Err("provider must be claude or codex".into()),
+            "devin" => Ok(Self::Devin),
+            _ => Err("provider must be claude, codex or devin".into()),
         }
     }
 }
