@@ -6900,6 +6900,49 @@ fn submit_cli_agent_rich_input_opencode_defers_enter_and_close() {
 }
 
 #[test]
+fn submit_cli_agent_rich_input_claude_keeps_short_text_unmarked() {
+    App::test((), |mut app| async move {
+        initialize_app_for_terminal_view(&mut app);
+        let _agent_view = FeatureFlag::AgentView.override_enabled(true);
+        let _cli_rich = FeatureFlag::CLIAgentRichInput.override_enabled(true);
+
+        let (_terminal, pty_writes) =
+            submit_rich_input_and_collect_pty_writes(&mut app, CLIAgent::Claude, "hello");
+
+        assert_eq!(pty_writes.borrow()[0], b"hello");
+        assert_eventually!(
+            pty_writes.borrow().len() == 2,
+            "carriage return should be written after delay"
+        );
+        assert_eq!(pty_writes.borrow()[1], b"\r");
+    })
+}
+
+#[test]
+fn submit_cli_agent_rich_input_claude_marks_long_text_and_defers_enter() {
+    App::test((), |mut app| async move {
+        initialize_app_for_terminal_view(&mut app);
+        let _agent_view = FeatureFlag::AgentView.override_enabled(true);
+        let _cli_rich = FeatureFlag::CLIAgentRichInput.override_enabled(true);
+
+        let text = "A long prompt. ".repeat(100);
+        let (_terminal, pty_writes) =
+            submit_rich_input_and_collect_pty_writes(&mut app, CLIAgent::Claude, &text);
+
+        assert_eq!(pty_writes.borrow().len(), 1);
+        assert_eq!(
+            pty_writes.borrow()[0],
+            [BRACKETED_PASTE_START, text.as_bytes(), BRACKETED_PASTE_END].concat()
+        );
+        assert_eventually!(
+            pty_writes.borrow().len() == 2,
+            "carriage return should be written after delay"
+        );
+        assert_eq!(pty_writes.borrow()[1], b"\r");
+    })
+}
+
+#[test]
 fn attach_path_as_context_routes_to_open_cli_agent_rich_input() {
     App::test((), |mut app| async move {
         initialize_app_for_terminal_view(&mut app);
@@ -9229,7 +9272,12 @@ fn remote_control_zero_width_prompt_snapshot_includes_visible_prompt_and_command
 }
 
 #[cfg(feature = "local_tty")]
-fn exercise_local_control_send(agent: CLIAgent, intervening_input: bool) {
+fn exercise_local_control_send(
+    agent: CLIAgent,
+    text: String,
+    expected_write: Vec<u8>,
+    intervening_input: bool,
+) {
     App::test((), move |mut app| async move {
         initialize_app_for_terminal_view(&mut app);
         app.update(crate::remote_control::register);
@@ -9285,7 +9333,7 @@ fn exercise_local_control_send(agent: CLIAgent, intervening_input: bool) {
                 ctx
             ));
             assert!(view.local_control_send_agent_text(
-                "hello".into(),
+                text,
                 &revision,
                 move |submitted| *callback.lock().unwrap() = Some(submitted),
                 ctx
@@ -9309,15 +9357,10 @@ fn exercise_local_control_send(agent: CLIAgent, intervening_input: bool) {
         let writes = writes.borrow();
         assert!(!writes.iter().any(|bytes| bytes == b"wrong"));
         if intervening_input {
-            assert_eq!(writes.as_slice(), &[b"hello".to_vec(), b"x".to_vec()]);
+            assert_eq!(writes.as_slice(), &[expected_write, b"x".to_vec()]);
         } else {
             assert_eq!(writes.len(), 2);
-            let expected = if agent == CLIAgent::Codex {
-                [BRACKETED_PASTE_START, b"hello", BRACKETED_PASTE_END].concat()
-            } else {
-                b"hello".to_vec()
-            };
-            assert_eq!(writes[0], expected);
+            assert_eq!(writes[0], expected_write);
             assert_eq!(writes[1], b"\r");
         }
     });
@@ -9326,19 +9369,29 @@ fn exercise_local_control_send(agent: CLIAgent, intervening_input: bool) {
 #[test]
 #[cfg(feature = "local_tty")]
 fn local_control_send_claude_stops_enter_after_human_input() {
-    exercise_local_control_send(CLIAgent::Claude, true);
+    exercise_local_control_send(CLIAgent::Claude, "hello".into(), b"hello".to_vec(), true);
 }
 
 #[test]
 #[cfg(feature = "local_tty")]
 fn local_control_send_claude_submits_text_and_delayed_enter() {
-    exercise_local_control_send(CLIAgent::Claude, false);
+    exercise_local_control_send(CLIAgent::Claude, "hello".into(), b"hello".to_vec(), false);
+}
+
+/// Unmarked text over about 1 KB reaches Claude Code in pieces and loses its start.
+#[test]
+#[cfg(feature = "local_tty")]
+fn local_control_send_claude_marks_long_text_as_a_paste() {
+    let text = "From the release session. ".repeat(50);
+    let marked = [BRACKETED_PASTE_START, text.as_bytes(), BRACKETED_PASTE_END].concat();
+    exercise_local_control_send(CLIAgent::Claude, text, marked, false);
 }
 
 #[test]
 #[cfg(feature = "local_tty")]
 fn local_control_send_codex_uses_bracketed_paste_and_enter() {
-    exercise_local_control_send(CLIAgent::Codex, false);
+    let marked = [BRACKETED_PASTE_START, b"hello", BRACKETED_PASTE_END].concat();
+    exercise_local_control_send(CLIAgent::Codex, "hello".into(), marked, false);
 }
 
 #[test]

@@ -94,8 +94,9 @@ use crate::view_components::action_button::{
 };
 
 /// Small delay inserted between separate PTY writes to CLI agents.
-/// (Used both for the mode-switch prefix split and for the `DelayedEnter`
-/// submit strategy so each write is delivered as a distinct stdin read.)
+/// (Used for the mode-switch prefix split and before Enter in the `DelayedEnter`
+/// strategy and Claude Code's marked paste, so each write is delivered as a
+/// distinct stdin read.)
 const CLI_AGENT_PTY_WRITE_DELAY: Duration = Duration::from_millis(50);
 
 /// Longer delay for agents (like Copilot) that need extra time after a
@@ -106,6 +107,14 @@ const CLI_AGENT_BRACKETED_PASTE_ENTER_DELAY: Duration = Duration::from_millis(30
 /// The CLI agent needs time to read from the system clipboard before
 /// we overwrite it with the next image.
 const CLI_AGENT_IMAGE_PASTE_DELAY: Duration = Duration::from_millis(300);
+
+/// Text longer than this goes to Claude Code as a marked paste.
+///
+/// macOS moves about 1 KB through a PTY at a time, so longer unmarked text reaches Claude Code in
+/// pieces and it can drop the earlier ones. Claude Code already treats text of this size as a
+/// paste, so marking it changes nothing else. Shorter text stays unmarked because Claude Code
+/// labels every marked paste as pasted, and a user's own prompt shouldn't read that way.
+const CLAUDE_UNMARKED_TEXT_MAX_BYTES: usize = 800;
 
 /// ASCII prefixes that CLI agents use to switch input modes (e.g. `!` for bash
 /// mode in Claude Code). When the rich input starts with one of these, the
@@ -497,9 +506,34 @@ enum RichInputSubmitStrategy {
     /// buffer as the text and don't support bracketed paste reliably.
     DelayedEnter,
     /// Wrap text in bracketed paste (reliable buffer insertion), then send
-    /// `\r` after a delay. For agents like Copilot that need bracketed paste
-    /// for reliable text delivery but also need a separate delayed Enter.
-    BracketedPasteDelayedEnter,
+    /// `\r` after the given delay. For agents like Copilot that need bracketed
+    /// paste for reliable text delivery but also need a separate delayed Enter.
+    BracketedPasteDelayedEnter(Duration),
+}
+
+impl RichInputSubmitStrategy {
+    /// The bytes that put `text` into the agent's composer.
+    fn composer_bytes(self, text: Vec<u8>) -> Vec<u8> {
+        match self {
+            Self::Inline | Self::DelayedEnter => text,
+            Self::BracketedPaste | Self::BracketedPasteDelayedEnter(_) => {
+                let mut bytes = BRACKETED_PASTE_START.to_vec();
+                // An escape in the text could end the paste early and turn the rest into keys.
+                bytes.extend(text.into_iter().filter(|byte| *byte != C0::ESC));
+                bytes.extend_from_slice(BRACKETED_PASTE_END);
+                bytes
+            }
+        }
+    }
+
+    /// How long to wait after writing the text before pressing Enter.
+    fn enter_delay(self) -> Duration {
+        match self {
+            Self::Inline | Self::BracketedPaste => Duration::ZERO,
+            Self::DelayedEnter => CLI_AGENT_PTY_WRITE_DELAY,
+            Self::BracketedPasteDelayedEnter(delay) => delay,
+        }
+    }
 }
 
 /// A closed pane drops its timer, which makes unfinished delivery explicitly uncertain.
@@ -519,11 +553,16 @@ fn submission_starts_agent_turn(text: &[u8]) -> bool {
     !text.trim_ascii_start().starts_with(b"/")
 }
 
-/// Returns the strategy for submitting rich input text to a CLI agent's PTY.
-fn rich_input_submit_strategy(agent: CLIAgent) -> RichInputSubmitStrategy {
+/// Returns the strategy for submitting `text` to a CLI agent's PTY.
+fn rich_input_submit_strategy(agent: CLIAgent, text: &[u8]) -> RichInputSubmitStrategy {
     match agent {
         CLIAgent::Codex => RichInputSubmitStrategy::BracketedPaste,
-        CLIAgent::Copilot => RichInputSubmitStrategy::BracketedPasteDelayedEnter,
+        CLIAgent::Copilot => RichInputSubmitStrategy::BracketedPasteDelayedEnter(
+            CLI_AGENT_BRACKETED_PASTE_ENTER_DELAY,
+        ),
+        CLIAgent::Claude if text.len() > CLAUDE_UNMARKED_TEXT_MAX_BYTES => {
+            RichInputSubmitStrategy::BracketedPasteDelayedEnter(CLI_AGENT_PTY_WRITE_DELAY)
+        }
         CLIAgent::Claude
         | CLIAgent::OpenCode
         | CLIAgent::Gemini
@@ -1280,12 +1319,11 @@ impl TerminalView {
             sessions_model.clear_draft(view_id);
         });
 
+        let text_bytes = text.into_bytes();
         let strategy = CLIAgentSessionsModel::as_ref(ctx)
             .session(self.view_id)
-            .map(|s| rich_input_submit_strategy(s.agent))
+            .map(|s| rich_input_submit_strategy(s.agent, &text_bytes))
             .unwrap_or(RichInputSubmitStrategy::Inline);
-
-        let text_bytes = text.into_bytes();
 
         // Clear the buffer eagerly so that any close path (auto-dismiss,
         // auto-toggle, or a deferred timer) sees an empty buffer and doesn't
@@ -1667,25 +1705,11 @@ impl TerminalView {
         let block_id = self.model.lock().block_list().active_block().id().clone();
         let text_bytes = text.into_bytes();
         let starts_turn = submission_starts_agent_turn(&text_bytes);
+        let strategy = rich_input_submit_strategy(agent, &text_bytes);
         self.coordination_send_pending = true;
         // write_to_pty avoids marking our own insertion as intervening human input.
-        if matches!(
-            rich_input_submit_strategy(agent),
-            RichInputSubmitStrategy::BracketedPaste
-        ) {
-            let mut bytes = BRACKETED_PASTE_START.to_vec();
-            bytes.extend_from_slice(&text_bytes);
-            bytes.extend_from_slice(BRACKETED_PASTE_END);
-            self.write_to_pty(bytes, ctx);
-        } else {
-            self.write_to_pty(text_bytes, ctx);
-        }
-        let delay = if agent == CLIAgent::Claude {
-            CLI_AGENT_PTY_WRITE_DELAY
-        } else {
-            Duration::ZERO
-        };
-        ctx.spawn(Timer::after(delay), move |me, _, ctx| {
+        self.write_to_pty(strategy.composer_bytes(text_bytes), ctx);
+        ctx.spawn(Timer::after(strategy.enter_delay()), move |me, _, ctx| {
             let same_ready_session = CLIAgentSessionsModel::as_ref(ctx)
                 .session(me.view_id)
                 .is_some_and(|session| {
@@ -1799,7 +1823,7 @@ impl TerminalView {
             return false;
         }
 
-        let strategy = rich_input_submit_strategy(agent);
+        let strategy = rich_input_submit_strategy(agent, &text_bytes);
         self.write_cli_agent_text_then_submit(text_bytes, strategy, is_desktop_input, ctx);
         true
     }
@@ -2070,49 +2094,25 @@ impl TerminalView {
             });
         }
 
+        let mut bytes = strategy.composer_bytes(text_bytes);
         match strategy {
             RichInputSubmitStrategy::Inline => {
-                let mut bytes = text_bytes;
                 bytes.extend_from_slice(b"\r");
                 self.write_cli_agent_bytes(bytes, is_desktop_input, ctx);
                 self.maybe_close_rich_input_after_submit(ctx);
             }
             RichInputSubmitStrategy::BracketedPaste => {
-                let mut bytes = Vec::with_capacity(
-                    BRACKETED_PASTE_START.len() + text_bytes.len() + BRACKETED_PASTE_END.len(),
-                );
-                bytes.extend_from_slice(BRACKETED_PASTE_START);
-                bytes.extend_from_slice(&text_bytes);
-                bytes.extend_from_slice(BRACKETED_PASTE_END);
                 self.write_cli_agent_bytes(bytes, is_desktop_input, ctx);
                 self.write_cli_agent_bytes(b"\r".to_vec(), is_desktop_input, ctx);
                 self.maybe_close_rich_input_after_submit(ctx);
             }
-            RichInputSubmitStrategy::DelayedEnter => {
-                self.write_cli_agent_bytes(text_bytes, is_desktop_input, ctx);
-                ctx.spawn(
-                    Timer::after(CLI_AGENT_PTY_WRITE_DELAY),
-                    move |me, _, ctx| {
-                        me.write_cli_agent_bytes(b"\r".to_vec(), is_desktop_input, ctx);
-                        me.maybe_close_rich_input_after_submit(ctx);
-                    },
-                );
-            }
-            RichInputSubmitStrategy::BracketedPasteDelayedEnter => {
-                let mut bytes = Vec::with_capacity(
-                    BRACKETED_PASTE_START.len() + text_bytes.len() + BRACKETED_PASTE_END.len(),
-                );
-                bytes.extend_from_slice(BRACKETED_PASTE_START);
-                bytes.extend_from_slice(&text_bytes);
-                bytes.extend_from_slice(BRACKETED_PASTE_END);
+            RichInputSubmitStrategy::DelayedEnter
+            | RichInputSubmitStrategy::BracketedPasteDelayedEnter(_) => {
                 self.write_cli_agent_bytes(bytes, is_desktop_input, ctx);
-                ctx.spawn(
-                    Timer::after(CLI_AGENT_BRACKETED_PASTE_ENTER_DELAY),
-                    move |me, _, ctx| {
-                        me.write_cli_agent_bytes(b"\r".to_vec(), is_desktop_input, ctx);
-                        me.maybe_close_rich_input_after_submit(ctx);
-                    },
-                );
+                ctx.spawn(Timer::after(strategy.enter_delay()), move |me, _, ctx| {
+                    me.write_cli_agent_bytes(b"\r".to_vec(), is_desktop_input, ctx);
+                    me.maybe_close_rich_input_after_submit(ctx);
+                });
             }
         }
     }
