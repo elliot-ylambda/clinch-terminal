@@ -359,6 +359,22 @@ integration_tests! {
     #[ignore = "Manual test: requires real display for frame capture"]
     test_redesign_agent_screens,
     #[ignore = "Manual test: requires real display for frame capture"]
+    test_one_box_screens,
+    #[ignore = "Manual test: requires real display for frame capture"]
+    test_one_box_agent_suggestion,
+    #[ignore = "Manual test: runs the signed-in Claude Code and Codex on a real display"]
+    test_one_box_real_agents,
+    #[ignore = "Manual test: runs the signed-in Claude Code and Codex on a real display"]
+    test_one_box_command_edges,
+    #[ignore = "Manual test: runs the signed-in Codex on a real display"]
+    test_coordinator_auto_pause,
+    #[ignore = "Manual test: requires real display for frame capture"]
+    test_coordinator_agent_picker,
+    #[ignore = "Manual test: runs the signed-in Codex on a real display"]
+    test_coordinator_auto_on_kickoff,
+    #[ignore = "Manual test: requires real display for frame capture"]
+    test_new_tab_start_screen,
+    #[ignore = "Manual test: requires real display for frame capture"]
     test_update_popup_and_footer_drag_screens,
 
     // Rich Input Ctrl+Enter submit toggle (issue #11588)

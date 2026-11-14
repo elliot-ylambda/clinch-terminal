@@ -96,7 +96,8 @@ use crate::terminal::cli_agent_sessions::plugin_manager::{
     PluginInstallError, PluginModalKind,
 };
 use crate::terminal::cli_agent_sessions::{
-    CLIAgentInputState, CLIAgentSessionStatus, CLIAgentSessionsModel, CLIAgentSessionsModelEvent,
+    provider_for_agent, CLIAgentInputState, CLIAgentSessionStatus, CLIAgentSessionsModel,
+    CLIAgentSessionsModelEvent,
 };
 use crate::terminal::input::models::InlineModelSelectorTab;
 use crate::terminal::input::{HandoffComposeState, MenuPositioningProvider};
@@ -112,7 +113,10 @@ use crate::terminal::view::ambient_agent::{
     AmbientAgentViewModel, ModelSelector, ModelSelectorEvent,
 };
 use crate::terminal::view::init::OPEN_CLI_AGENT_RICH_INPUT_KEYBINDING;
-use crate::terminal::view::TerminalAction;
+use crate::terminal::view::{
+    coordinator_choices, HarnessPicker, HarnessPickerEvent, PickerPlacement, StartChoice,
+    TerminalAction,
+};
 #[cfg(not(target_family = "wasm"))]
 use crate::terminal::ShellLaunchData;
 use crate::terminal::{CLIAgent, TerminalModel};
@@ -125,9 +129,7 @@ use crate::view_components::DismissibleToast;
 #[cfg(not(target_family = "wasm"))]
 use crate::view_components::ToastLink;
 use crate::workspace::view::TOGGLE_PROJECT_EXPLORER_BINDING_NAME;
-use crate::workspace::ToastStack;
-#[cfg(not(target_family = "wasm"))]
-use crate::workspace::WorkspaceAction;
+use crate::workspace::{ToastStack, WorkspaceAction};
 use crate::workspaces::user_workspaces::UserWorkspaces;
 
 const ENABLE_NLD_TOOLTIP: &str = "Enable terminal command autodetection";
@@ -146,6 +148,10 @@ pub const FOOTER_MORE_BUTTON_POSITION_ID: &str = "agent_footer:more";
 /// Everything on a footer row besides the buttons: agent icon, status, More and the right-hand
 /// controls. Generous on purpose, so an estimate never lets the row overflow.
 const CLI_FOOTER_RESERVED_WIDTH: f32 = 260.;
+/// What a Coordinator's agent picker takes beyond the agent icon it replaces.
+const COORDINATOR_PICKER_EXTRA_WIDTH: f32 = 110.;
+/// Where integration tests click to open a Coordinator footer's agent picker.
+pub const COORDINATOR_AGENT_PICKER_POSITION_ID: &str = "agent_footer:coordinator_agent_picker";
 const TERMINAL_FOOTER_RESERVED_WIDTH: f32 = 100.;
 
 /// A footer button's width, estimated from its label. Nothing is measured before layout, and an
@@ -461,6 +467,9 @@ pub struct AgentInputFooter {
     auto_continue_mouse_state: MouseStateHandle,
     more_menu_mouse_state: MouseStateHandle,
     is_more_menu_open: bool,
+    /// A Coordinator's footer shows this in place of the agent's icon, to switch the agent it
+    /// runs. Made once the Coordinator's agent has started.
+    coordinator_picker: Option<ViewHandle<HarnessPicker>>,
     /// Kept between frames for each footer button, by what the button is.
     footer_button_drag_states: RefCell<HashMap<String, DraggableState>>,
     footer_drag: Option<FooterDrag>,
@@ -818,6 +827,7 @@ impl AgentInputFooter {
                     return;
                 }
                 me.sync_conversation_bookmark_button(ctx);
+                me.sync_coordinator_picker(ctx);
 
                 // Reset the debounce when a session ends so the next
                 // session gets a fresh debounce window.
@@ -1190,6 +1200,7 @@ impl AgentInputFooter {
             auto_continue_mouse_state: MouseStateHandle::default(),
             more_menu_mouse_state: MouseStateHandle::default(),
             is_more_menu_open: false,
+            coordinator_picker: None,
             footer_button_drag_states: RefCell::new(HashMap::new()),
             footer_drag: None,
             plugin_operation_in_progress: false,
@@ -2086,10 +2097,15 @@ impl AgentInputFooter {
             })
             .map(FooterEntry::estimated_width)
             .collect::<Vec<_>>();
+        let reserved = if self.shown_coordinator_picker(kind).is_some() {
+            CLI_FOOTER_RESERVED_WIDTH + COORDINATOR_PICKER_EXTRA_WIDTH
+        } else {
+            CLI_FOOTER_RESERVED_WIDTH
+        };
         render_footer_row_for_width(
             self.footer_visible_count(kind, app),
             &widths,
-            CLI_FOOTER_RESERVED_WIDTH,
+            reserved,
             |max_chips| self.render_cli_mode_footer_row(max_chips, app),
         )
     }
@@ -2349,6 +2365,58 @@ impl AgentInputFooter {
         }
     }
 
+    /// The agent picker a footer of `kind` shows: only a Coordinator's footer has one.
+    fn shown_coordinator_picker(&self, kind: FooterKind) -> Option<&ViewHandle<HarnessPicker>> {
+        self.coordinator_picker
+            .as_ref()
+            .filter(|_| kind == FooterKind::Coordinator)
+    }
+
+    /// The agent a Coordinator's footer picker shows, if this footer shows one. Tests read it.
+    #[cfg(feature = "integration_tests")]
+    pub(crate) fn coordinator_picker_agent(&self, app: &AppContext) -> Option<&'static str> {
+        self.shown_coordinator_picker(self.cli_footer_kind(app))
+            .map(|picker| picker.as_ref(app).choice().name())
+    }
+
+    /// Keeps a Coordinator's agent picker on the agent it runs, making the picker once that agent
+    /// has started. Picking another agent asks the workspace to restart the Coordinator with it,
+    /// after this update, since that closes this pane.
+    fn sync_coordinator_picker(&mut self, ctx: &mut ViewContext<Self>) {
+        let Some(provider) = self.cli_agent(ctx).and_then(provider_for_agent) else {
+            return;
+        };
+        let choice = StartChoice::Agent(provider);
+        if let Some(picker) = &self.coordinator_picker {
+            picker.update(ctx, |picker, ctx| picker.set_choice(choice, ctx));
+            return;
+        }
+        if !crate::workspace::view::coordinator::is_coordinator_terminal(self.terminal_view_id, ctx)
+        {
+            return;
+        }
+        let picker = ctx.add_typed_action_view(|ctx| {
+            HarnessPicker::new(
+                choice,
+                coordinator_choices(provider),
+                PickerPlacement::CoordinatorFooter,
+                ctx,
+            )
+        });
+        ctx.subscribe_to_view(&picker, |_, _, event, ctx| match event {
+            HarnessPickerEvent::Selected(StartChoice::Agent(provider)) => {
+                ctx.dispatch_typed_action_deferred(WorkspaceAction::SetCoordinatorAgent {
+                    provider: *provider,
+                    draft: None,
+                });
+            }
+            HarnessPickerEvent::Selected(StartChoice::Terminal) => {}
+            HarnessPickerEvent::Closed => ctx.emit(AgentInputFooterEvent::AgentPickerClosed),
+        });
+        self.coordinator_picker = Some(picker);
+        ctx.notify();
+    }
+
     fn render_cli_mode_footer_row(&self, max_chips: usize, app: &AppContext) -> Box<dyn Element> {
         let appearance = Appearance::as_ref(app);
         let cli_icon_size = ButtonSize::AgentInputButtonLarge.icon_size(appearance, app);
@@ -2376,8 +2444,22 @@ impl AgentInputFooter {
             .with_cross_axis_alignment(CrossAxisAlignment::Center)
             .with_spacing(4.);
 
-        // CLI agent brand icon is always rendered (not configurable).
-        if let Some(agent) = self.cli_agent(app) {
+        // A Coordinator leads with its agent picker, which shows the agent's icon; every other
+        // session with its agent's brand icon (not configurable).
+        let kind = self.cli_footer_kind(app);
+        if let Some(picker) = self.shown_coordinator_picker(kind) {
+            left_buttons.add_child(
+                Container::new(
+                    SavePosition::new(
+                        ChildView::new(picker).finish(),
+                        COORDINATOR_AGENT_PICKER_POSITION_ID,
+                    )
+                    .finish(),
+                )
+                .with_padding_right(4.)
+                .finish(),
+            );
+        } else if let Some(agent) = self.cli_agent(app) {
             if let Some(icon) = agent.icon() {
                 let icon_color = agent
                     .brand_color()
@@ -2428,7 +2510,6 @@ impl AgentInputFooter {
         }
         // Buttons appear in the order the user arranged them, by dragging them or in the editor.
         // A coordinator tab leads with prompts for coordinating, until it's arranged otherwise.
-        let kind = self.cli_footer_kind(app);
         let entries = self.footer_entries(kind, app);
         let drawn = self.drawn_footer_entries(kind, &entries, app);
         // The first few stay on the row. Everything else opens from More, so the footer never
@@ -3989,6 +4070,8 @@ pub enum AgentInputFooterEvent {
     ModelSelectorOpened,
     ModelSelectorClosed,
     EnvironmentSelectorClosed,
+    /// A Coordinator's agent picker closed, so focus goes back where it was.
+    AgentPickerClosed,
     ToggleInlineModelSelector {
         initial_tab: InlineModelSelectorTab,
     },

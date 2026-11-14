@@ -593,7 +593,7 @@ pub(crate) fn provider_for_agent(agent: CLIAgent) -> Option<AgentResumeProvider>
     }
 }
 
-fn agent_for_provider(provider: AgentResumeProvider) -> CLIAgent {
+pub(crate) fn agent_for_provider(provider: AgentResumeProvider) -> CLIAgent {
     match provider {
         AgentResumeProvider::Claude => CLIAgent::Claude,
         AgentResumeProvider::Codex => CLIAgent::Codex,

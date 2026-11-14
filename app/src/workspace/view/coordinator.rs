@@ -17,6 +17,7 @@ use crate::channel::{Channel, ChannelState};
 use crate::menu::{MenuItem, MenuItemFields};
 use crate::settings::ClinchSettings;
 use crate::terminal::cli_agent_sessions::{provider_for_agent, CLIAgentSessionsModel};
+use crate::terminal::view::{agent_display_name, start_screen_project_name};
 use crate::workspace::action::WorkspaceAction;
 use crate::workspace::WorkspaceRegistry;
 
@@ -199,12 +200,64 @@ impl Workspace {
         activate: bool,
         ctx: &mut ViewContext<Self>,
     ) -> bool {
-        self.open_coordinator_tab_with_command(
+        self.open_fresh_coordinator_tab(directory, provider, activate, None, ctx)
+    }
+
+    /// Opens a new coordinator conversation, which shows its start screen until the first
+    /// message. `draft` is text typed on the start screen of a coordinator it replaces.
+    fn open_fresh_coordinator_tab(
+        &mut self,
+        directory: Option<PathBuf>,
+        provider: AgentResumeProvider,
+        activate: bool,
+        draft: Option<String>,
+        ctx: &mut ViewContext<Self>,
+    ) -> bool {
+        let project = directory.as_deref().and_then(start_screen_project_name);
+        if !self.open_coordinator_tab_with_command(
             directory,
             coordinator_launch_command(provider),
             activate,
             ctx,
-        )
+        ) {
+            return false;
+        }
+        if let Some(index) = self.coordinator_tab_index() {
+            self.show_coordinator_start_screen(index, provider, true, project, draft, ctx);
+        }
+        true
+    }
+
+    /// Puts the start screen on the pane of the coordinator at `index` until its first message.
+    /// A coordinator that may be resuming a conversation (`known_fresh` false) shows it only once
+    /// its history proves it has none.
+    fn show_coordinator_start_screen(
+        &self,
+        index: usize,
+        provider: AgentResumeProvider,
+        known_fresh: bool,
+        project: Option<String>,
+        draft: Option<String>,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        let Some(terminal) = self
+            .tabs
+            .get(index)
+            .and_then(|tab| tab.pane_group.as_ref(ctx).active_session_view(ctx))
+        else {
+            return;
+        };
+        let kickoff = self.coordinator_kickoff(ctx);
+        terminal.update(ctx, |terminal, ctx| {
+            terminal.show_coordinator_start_screen(
+                provider,
+                known_fresh,
+                project,
+                draft,
+                kickoff,
+                ctx,
+            );
+        });
     }
 
     /// Opens a coordinator that runs `command` at `directory` and pins it first.
@@ -242,9 +295,23 @@ impl Workspace {
         true
     }
 
-    /// Gives a restored coordinator pane its role and its fresh-start fallback.
+    /// Gives a restored coordinator pane its role and its fresh-start fallback, and its start
+    /// screen should it turn out to have no conversation.
     pub(super) fn prepare_restored_coordinator(&self, index: usize, ctx: &mut ViewContext<Self>) {
         let default_provider = configured_provider(ctx);
+        let directory = self.tabs[index]
+            .pane_group
+            .as_ref(ctx)
+            .active_session_view(ctx)
+            .and_then(|terminal| terminal.as_ref(ctx).pwd().map(PathBuf::from));
+        self.show_coordinator_start_screen(
+            index,
+            default_provider,
+            false,
+            directory.as_deref().and_then(start_screen_project_name),
+            None,
+            ctx,
+        );
         let Some(manager_handle) = self.tabs[index]
             .pane_group
             .read(ctx, |pane_group, ctx| pane_group.terminal_manager(0, ctx))
@@ -321,8 +388,15 @@ impl Workspace {
                         if me.coordinator_tab_index().is_some() {
                             return;
                         }
+                        let project = directory.as_deref().and_then(start_screen_project_name);
                         let command = coordinator_restore_command(command.as_deref(), provider);
-                        me.open_coordinator_tab_with_command(directory, command, false, ctx);
+                        if me.open_coordinator_tab_with_command(directory, command, false, ctx) {
+                            if let Some(index) = me.coordinator_tab_index() {
+                                me.show_coordinator_start_screen(
+                                    index, provider, false, project, None, ctx,
+                                );
+                            }
+                        }
                     },
                 );
             },
@@ -351,17 +425,31 @@ impl Workspace {
         );
     }
 
-    /// Restarts the coordinator with another agent in the same directory, and remembers it as the
-    /// default for new coordinators.
-    pub(super) fn switch_coordinator_agent(
+    /// The coordinator's agent pickers and tab menu: restarts the coordinator with `provider`
+    /// unless it runs it already, carrying over `draft`, what was typed on its start screen.
+    pub(super) fn choose_coordinator_agent(
+        &mut self,
+        provider: AgentResumeProvider,
+        draft: Option<String>,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        let Some(index) = self.coordinator_tab_index() else {
+            return;
+        };
+        if self.coordinator_provider(index, ctx) != provider {
+            self.restart_coordinator_with(index, provider, draft, ctx);
+        }
+    }
+
+    /// Replaces the coordinator at `index` with a new conversation running `provider` in the same
+    /// directory, and remembers `provider` as the default for new coordinators.
+    fn restart_coordinator_with(
         &mut self,
         index: usize,
         provider: AgentResumeProvider,
+        draft: Option<String>,
         ctx: &mut ViewContext<Self>,
     ) {
-        if !self.tabs.get(index).is_some_and(|tab| tab.coordinator) {
-            return;
-        }
         let directory = self.tabs[index]
             .pane_group
             .as_ref(ctx)
@@ -373,13 +461,21 @@ impl Workspace {
         // Clear the marker first: closing the old session here is not the user closing the
         // coordinator, so it must not turn the default off.
         self.tabs[index].coordinator = false;
-        if !self.open_coordinator_tab(directory, provider, true, ctx) {
+        if !self.open_fresh_coordinator_tab(directory, provider, true, draft, ctx) {
             self.tabs[index].coordinator = true;
             return;
         }
+        // The old conversation's loops end with it, so a pause still waiting to go out would only
+        // reach the new one.
+        self.finish_auto_coordinate_pause(ctx);
         // The project's Auto choice belongs to the project, not to the agent running it.
         if let Some(new_index) = self.coordinator_tab_index() {
             self.tabs[new_index].auto_coordinate = auto_coordinate;
+            // The start screen offered the first message by the default; offer it by the
+            // project's own choice.
+            if auto_coordinate.is_some() {
+                self.refresh_coordinator_kickoff(ctx);
+            }
         }
         if let Some(old_index) = self
             .tabs
@@ -402,8 +498,8 @@ impl Workspace {
             .unwrap_or_else(|| configured_provider(ctx))
     }
 
-    /// Coordinator entries for a tab's right-click menu: switching the coordinator's agent, or
-    /// opening one when this project has none.
+    /// Coordinator entries for a tab's right-click menu: switching the coordinator to each other
+    /// agent it can run, or opening one when this project has none.
     pub(super) fn coordinator_menu_items(
         &self,
         index: usize,
@@ -411,22 +507,25 @@ impl Workspace {
     ) -> Vec<MenuItem<WorkspaceAction>> {
         if self.tabs.get(index).is_some_and(|tab| tab.coordinator) {
             let current = self.coordinator_provider(index, ctx);
-            let mut items: Vec<_> = coordinator_switch_targets(current, devin_is_installed())
+            return coordinator_switch_targets(current, devin_is_installed())
                 .into_iter()
-                .map(|(label, provider)| {
-                    MenuItemFields::new(label)
-                        .with_on_select_action(WorkspaceAction::SwitchCoordinatorAgent(
-                            index, provider,
-                        ))
-                        .into_item()
+                .map(|provider| {
+                    MenuItemFields::new(format!(
+                        "Switch coordinator to {}",
+                        agent_display_name(provider)
+                    ))
+                    .with_on_select_action(WorkspaceAction::SetCoordinatorAgent {
+                        provider,
+                        draft: None,
+                    })
+                    .into_item()
                 })
+                .chain(std::iter::once(
+                    MenuItemFields::new("Turn coordinator off")
+                        .with_on_select_action(WorkspaceAction::SetCoordinatorOn(false))
+                        .into_item(),
+                ))
                 .collect();
-            items.push(
-                MenuItemFields::new("Turn coordinator off")
-                    .with_on_select_action(WorkspaceAction::SetCoordinatorOn(false))
-                    .into_item(),
-            );
-            return items;
         }
         if self.coordinator_tab_index().is_none() {
             return vec![MenuItemFields::new("New coordinator session")
@@ -489,27 +588,39 @@ pub(super) fn set_coordinator_enabled(enabled: bool, ctx: &mut AppContext) {
     });
 }
 
-/// The agents a coordinator running `current` can switch to. Devin is offered only where it's
-/// installed, because the choice becomes the default for every new coordinator.
-pub(crate) fn coordinator_switch_targets(
+/// The agents a coordinator running `current` can run, in picker order. Devin is offered only
+/// where it's installed, because the choice becomes the default for every new coordinator; one
+/// running Devin already keeps it listed.
+pub(crate) fn coordinator_agents(
     current: AgentResumeProvider,
     devin_installed: bool,
-) -> Vec<(&'static str, AgentResumeProvider)> {
+) -> Vec<AgentResumeProvider> {
     [
-        ("Switch coordinator to Claude", AgentResumeProvider::Claude),
-        ("Switch coordinator to Codex", AgentResumeProvider::Codex),
-        ("Switch coordinator to Devin", AgentResumeProvider::Devin),
+        AgentResumeProvider::Claude,
+        AgentResumeProvider::Codex,
+        AgentResumeProvider::Devin,
     ]
     .into_iter()
-    .filter(|(_, provider)| {
-        *provider != current && (*provider != AgentResumeProvider::Devin || devin_installed)
+    .filter(|provider| {
+        *provider != AgentResumeProvider::Devin || devin_installed || *provider == current
     })
     .collect()
 }
 
+/// The agents a coordinator running `current` can switch to.
+pub(crate) fn coordinator_switch_targets(
+    current: AgentResumeProvider,
+    devin_installed: bool,
+) -> Vec<AgentResumeProvider> {
+    coordinator_agents(current, devin_installed)
+        .into_iter()
+        .filter(|provider| *provider != current)
+        .collect()
+}
+
 /// Whether the Devin CLI is in a place its installers use. The app's own PATH can't say: one
 /// started from Finder inherits a minimal PATH.
-fn devin_is_installed() -> bool {
+pub(crate) fn devin_is_installed() -> bool {
     let home_install = dirs::home_dir().map(|home| home.join(".local/bin/devin"));
     home_install
         .into_iter()

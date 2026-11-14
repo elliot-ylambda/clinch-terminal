@@ -8375,6 +8375,7 @@ impl Workspace {
                 false,
                 ctx,
             );
+            self.start_new_terminal_tab(ctx);
         }
 
         // If the active tab is a member of the group, the new tab inherits this group on creation.
@@ -14028,6 +14029,11 @@ impl Workspace {
         let Some(repo_path) = self.automatic_worktree_repo(ctx) else {
             return false;
         };
+        #[cfg(feature = "local_fs")]
+        if matches!(session_type, SessionType::Terminal) {
+            self.add_worktree_terminal_tab(repo_path, ctx);
+            return true;
+        }
         let Some(config) = self.automatic_worktree_tab_config_for_repo(session_type, &repo_path)
         else {
             return false;
@@ -14036,6 +14042,58 @@ impl Workspace {
         self.open_tab_config_with_params(config, HashMap::new(), None, ctx);
         ctx.notify();
         true
+    }
+
+    /// Opens a terminal tab in the repository's main checkout with its start screen, and gets a
+    /// worktree ready for it in the background. The shell moves into the worktree once it is.
+    #[cfg(feature = "local_fs")]
+    fn add_worktree_terminal_tab(&mut self, primary: PathBuf, ctx: &mut ViewContext<Self>) {
+        let options =
+            NewTerminalOptions::default().with_initial_directory_opt(Some(primary.clone()));
+        self.add_tab_with_pane_layout(
+            PanesLayout::SingleTerminal(Box::new(options)),
+            Arc::new(HashMap::new()),
+            None,
+            ctx,
+        );
+        let project = crate::terminal::view::start_screen_project_name(&primary);
+        let repository = crate::managed_worktrees::Repository::new(primary);
+        self.start_active_tab(project, Some(repository), ctx);
+    }
+
+    /// Puts the start screen on the new tab that is now active, getting a worktree of
+    /// `repository` ready for it when there is one.
+    #[cfg(feature = "local_fs")]
+    fn start_active_tab(
+        &mut self,
+        project: Option<String>,
+        repository: Option<crate::managed_worktrees::Repository>,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        let Some(terminal) = self
+            .tabs
+            .get(self.active_tab_index)
+            .and_then(|tab| tab.pane_group.as_ref(ctx).active_session_view(ctx))
+        else {
+            return;
+        };
+        terminal.update(ctx, |terminal, ctx| {
+            terminal.start_new_tab(project, repository, ctx);
+        });
+        ctx.notify();
+    }
+
+    /// The start screen for a plain new terminal tab the user opened.
+    fn start_new_terminal_tab(&mut self, ctx: &mut ViewContext<Self>) {
+        #[cfg(feature = "local_fs")]
+        if matches!(
+            AISettings::as_ref(ctx).default_session_mode(ctx),
+            DefaultSessionMode::Terminal
+        ) {
+            self.start_active_tab(None, None, ctx);
+        }
+        #[cfg(not(feature = "local_fs"))]
+        let _ = ctx;
     }
 
     fn add_default_tab_impl(
@@ -14080,6 +14138,10 @@ impl Workspace {
             // (add_terminal_tab applies DefaultSessionMode::Agent internally).
             DefaultSessionMode::Terminal | DefaultSessionMode::Agent => {
                 self.add_terminal_tab(false, ctx);
+                // Automation's tabs are for its commands.
+                if allow_automatic_worktree {
+                    self.start_new_terminal_tab(ctx);
+                }
             }
         }
     }
@@ -26080,8 +26142,8 @@ impl TypedActionView for Workspace {
             CloseTabsAboveGroup(group_id) => self.close_tabs_above_group(*group_id, ctx),
             CloseTabsBelowGroup(group_id) => self.close_tabs_below_group(*group_id, ctx),
             PinTab(tab_index) => self.pin_tab(*tab_index, ctx),
-            SwitchCoordinatorAgent(tab_index, provider) => {
-                self.switch_coordinator_agent(*tab_index, *provider, ctx)
+            SetCoordinatorAgent { provider, draft } => {
+                self.choose_coordinator_agent(*provider, draft.clone(), ctx)
             }
             OpenCoordinatorSession => self.open_coordinator_from_menu(ctx),
             SetAutoCoordinate(enabled) => self.set_auto_coordinate(*enabled, ctx),

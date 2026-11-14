@@ -15,6 +15,7 @@ use warpui::{ModelContext, ModelSpawner};
 
 use super::bridge::LocalControlBridge;
 use super::permissions::{ensure_action_allowed, ensure_feature_enabled};
+use crate::terminal::view::use_agent_footer::AgentSendOrigin;
 
 type Reply = Result<Value, ControlError>;
 
@@ -424,7 +425,7 @@ fn dispatch_pending(
             let text = claimed.params.text;
             let id = claimed.params.request_id;
             entry.terminal.update(ctx, |terminal, ctx| {
-                terminal.local_control_send_agent_text(text, &revision, move |submitted| {
+                terminal.local_control_send_agent_text(text, &revision, AgentSendOrigin::LocalControl, move |submitted| {
                     let _ = sender.send(Command::Finished(id, submitted));
                 }, ctx)
             })

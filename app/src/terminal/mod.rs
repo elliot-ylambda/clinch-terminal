@@ -59,6 +59,7 @@ mod meta_shortcuts;
 pub mod mock_terminal_manager;
 pub mod model;
 pub mod model_events;
+pub(crate) mod one_box_composer;
 pub mod platform;
 pub mod profile_model_selector;
 pub mod prompt;

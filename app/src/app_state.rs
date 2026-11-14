@@ -47,6 +47,19 @@ impl AppState {
         }
         uuids
     }
+
+    /// The working folder of every terminal pane, in every window.
+    pub(crate) fn terminal_pane_folders(&self) -> Vec<std::path::PathBuf> {
+        let mut folders = Vec::new();
+        for window in &self.windows {
+            for project in &window.projects {
+                for tab in &project.tabs {
+                    tab.root.collect_terminal_pane_folders(&mut folders);
+                }
+            }
+        }
+        folders
+    }
 }
 
 /// Snapshot of one physical window and the ordered project workspaces it
@@ -168,6 +181,21 @@ impl PaneNodeSnapshot {
                         .iter()
                         .any(|(_, child)| child.has_horizontal_split())
             }
+        }
+    }
+
+    fn collect_terminal_pane_folders(&self, folders: &mut Vec<std::path::PathBuf>) {
+        match self {
+            PaneNodeSnapshot::Branch(branch) => {
+                for (_, child) in &branch.children {
+                    child.collect_terminal_pane_folders(folders);
+                }
+            }
+            PaneNodeSnapshot::Leaf(LeafSnapshot {
+                contents: LeafContents::Terminal(terminal),
+                ..
+            }) => folders.extend(terminal.cwd.as_deref().map(std::path::PathBuf::from)),
+            PaneNodeSnapshot::Leaf(_) => {}
         }
     }
 

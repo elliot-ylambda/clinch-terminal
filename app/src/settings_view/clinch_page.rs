@@ -39,8 +39,8 @@ use crate::report_if_error;
 use crate::settings::{
     AutoCreateWorktreesForNewTabs, CliAgentAutoContinueOnLimitReset, CliAgentUsageSettings,
     ClinchAutomaticUpdateCheck, ClinchContinueSessionsAfterRestart, ClinchSettings,
-    ClinchSleepIdleAgentTabsAfterHours, LocalControlMode, LocalControlSettings,
-    ShowCliAgentPlanLimits,
+    ClinchSleepIdleAgentTabsAfterHours, LocalControlMode, LocalControlSettings, NewTabChatView,
+    RemoveUnusedWorktrees, ShowCliAgentPlanLimits,
 };
 use crate::terminal::session_settings::{NotificationsSettings, SessionSettings};
 use crate::ui_components::icons::Icon;
@@ -126,6 +126,8 @@ pub enum ClinchSettingsPageAction {
     AgentStatusOnTabs,
     ToggleTabDetailsCard,
     AutoCreateWorktreesForNewTabs,
+    RemoveUnusedWorktrees,
+    NewTabChatView,
     CliAgentPlanLimits,
     CliAgentAutoContinue,
     ContinueSessionsAfterRestart,
@@ -199,6 +201,8 @@ impl ClinchSettingsPageView {
             .is_supported_on_current_platform()
         {
             project_widgets.push(Box::new(AutoCreateWorktreesWidget::default()));
+            project_widgets.push(Box::new(RemoveUnusedWorktreesWidget::default()));
+            project_widgets.push(Box::new(NewTabChatViewWidget::default()));
         }
         let mut usage_widgets: Vec<Box<dyn SettingsWidget<View = Self>>> = vec![];
         if CliAgentUsageSettings::as_ref(ctx)
@@ -406,6 +410,18 @@ impl TypedActionView for ClinchSettingsPageView {
                     report_if_error!(settings
                         .auto_create_worktrees_for_new_tabs
                         .toggle_and_save_value(ctx));
+                });
+                ctx.notify();
+            }
+            ClinchSettingsPageAction::RemoveUnusedWorktrees => {
+                ClinchSettings::handle(ctx).update(ctx, |settings, ctx| {
+                    report_if_error!(settings.remove_unused_worktrees.toggle_and_save_value(ctx));
+                });
+                ctx.notify();
+            }
+            ClinchSettingsPageAction::NewTabChatView => {
+                ClinchSettings::handle(ctx).update(ctx, |settings, ctx| {
+                    report_if_error!(settings.new_tab_chat_view.toggle_and_save_value(ctx));
                 });
                 ctx.notify();
             }
@@ -1868,8 +1884,106 @@ impl SettingsWidget for AutoCreateWorktreesWidget {
                 })
                 .finish(),
             Some(
-                "When the active project is a local Git repository with a main branch, create \
-                 ordinary new terminal and Agent tabs in isolated linked worktrees."
+                "When the active project is a local Git repository with a main branch, give \
+                 ordinary new terminal and Agent tabs a linked worktree of their own. A new tab \
+                 takes an unused worktree when there is one, keeping its dependencies."
+                    .into(),
+            ),
+        )
+    }
+}
+
+#[derive(Default)]
+struct RemoveUnusedWorktreesWidget {
+    switch_state: SwitchStateHandle,
+}
+
+impl SettingsWidget for RemoveUnusedWorktreesWidget {
+    type View = ClinchSettingsPageView;
+
+    fn search_terms(&self) -> &str {
+        "clinch projects git worktree worktrees remove clean up cleanup unused orphaned disk space"
+    }
+
+    fn render(
+        &self,
+        view: &Self::View,
+        appearance: &Appearance,
+        app: &AppContext,
+    ) -> Box<dyn Element> {
+        let enabled = *ClinchSettings::as_ref(app).remove_unused_worktrees;
+        render_body_item::<ClinchSettingsPageAction>(
+            "Remove unused worktrees".into(),
+            None,
+            LocalOnlyIconState::for_setting(
+                RemoveUnusedWorktrees::storage_key(),
+                RemoveUnusedWorktrees::sync_to_cloud(),
+                &mut view.local_only_icon_tooltip_states.borrow_mut(),
+                app,
+            ),
+            ToggleState::Enabled,
+            appearance,
+            appearance
+                .ui_builder()
+                .switch(self.switch_state.clone())
+                .check(enabled)
+                .build()
+                .on_click(|ctx, _, _| {
+                    ctx.dispatch_typed_action(ClinchSettingsPageAction::RemoveUnusedWorktrees);
+                })
+                .finish(),
+            Some(
+                "Remove Clinch's worktrees nothing has used for a week, keeping the three most \
+                 recently used for new tabs. A worktree with changes, untracked files, commits \
+                 missing from main, or ignored files that can't be made again is always kept."
+                    .into(),
+            ),
+        )
+    }
+}
+
+#[derive(Default)]
+struct NewTabChatViewWidget {
+    switch_state: SwitchStateHandle,
+}
+
+impl SettingsWidget for NewTabChatViewWidget {
+    type View = ClinchSettingsPageView;
+
+    fn search_terms(&self) -> &str {
+        "clinch new tab chat view start screen empty state claude codex terminal toggle"
+    }
+
+    fn render(
+        &self,
+        view: &Self::View,
+        appearance: &Appearance,
+        app: &AppContext,
+    ) -> Box<dyn Element> {
+        let enabled = *ClinchSettings::as_ref(app).new_tab_chat_view;
+        render_body_item::<ClinchSettingsPageAction>(
+            "Open new tabs in chat view".into(),
+            None,
+            LocalOnlyIconState::for_setting(
+                NewTabChatView::storage_key(),
+                NewTabChatView::sync_to_cloud(),
+                &mut view.local_only_icon_tooltip_states.borrow_mut(),
+                app,
+            ),
+            ToggleState::Enabled,
+            appearance,
+            appearance
+                .ui_builder()
+                .switch(self.switch_state.clone())
+                .check(enabled)
+                .build()
+                .on_click(|ctx, _, _| {
+                    ctx.dispatch_typed_action(ClinchSettingsPageAction::NewTabChatView);
+                })
+                .finish(),
+            Some(
+                "New tabs open on a box that starts Claude Code or Codex with your first \
+                 message. The toggle at the top of a new tab switches between chat and terminal."
                     .into(),
             ),
         )

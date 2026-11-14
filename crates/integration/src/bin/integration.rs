@@ -478,6 +478,14 @@ fn register_tests() -> HashMap<&'static str, BoxedBuilderFn> {
     register_test!(test_redesign_screens);
     register_test!(test_redesign_screens_paper);
     register_test!(test_redesign_agent_screens);
+    register_test!(test_one_box_screens);
+    register_test!(test_one_box_real_agents);
+    register_test!(test_one_box_command_edges);
+    register_test!(test_coordinator_auto_pause);
+    register_test!(test_coordinator_agent_picker);
+    register_test!(test_coordinator_auto_on_kickoff);
+    register_test!(test_one_box_agent_suggestion);
+    register_test!(test_new_tab_start_screen);
     register_test!(test_update_popup_and_footer_drag_screens);
 
     // Rich Input Ctrl+Enter submit toggle (issue #11588)

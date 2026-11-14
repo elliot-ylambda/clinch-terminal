@@ -301,6 +301,7 @@ use crate::terminal::input::terminal_message_bar::TerminalInputMessageBar;
 use crate::terminal::input::user_query::{UserQueryMenuEvent, UserQueryMenuView};
 use crate::terminal::model::session::active_session::ActiveSession;
 use crate::terminal::model::session::shell_quote_arg;
+use crate::terminal::one_box_composer::{is_agent_command, one_box_agent, OneBoxKey};
 use crate::terminal::package_installers::command_at_cursor_has_common_package_installer_prefix;
 use crate::terminal::prompt_render_helper::should_render_ps1_prompt;
 use crate::terminal::universal_developer_input::AtContextMenuDisabledReason;
@@ -997,6 +998,15 @@ pub enum Event {
     },
     Copy,
     UnhandledModifierKeyOnEditor(Arc<String>),
+    /// An agent key that Clinch's box passes through while replacing the agent's composer.
+    ForwardKeyToOneBoxAgent(OneBoxKey),
+    /// The box's text is, or just stopped being, a slash command. While the box replaces the
+    /// agent's composer, the command is copied there so the agent's own menu lists it.
+    OneBoxCommandEdited,
+    /// Enter on a new tab's start screen, with the box's text.
+    StartScreenSubmitted(String),
+    /// Escape on a new tab's start screen.
+    StartScreenEscape,
     ClearSelectionsWhenShellMode,
     InputStateChanged(InputState),
     /// Emitted when the input text transitions between empty and non-empty states
@@ -1730,6 +1740,24 @@ pub struct Input {
     /// If simply looking for if the editor contents empty, check the editor view directly instead
     /// of using this flag.
     is_editor_empty_on_last_edit: bool,
+
+    /// Replaces the agent input's placeholder, for the Coordinator's start screen.
+    cli_agent_hint_override: Option<&'static str>,
+
+    /// The earlier agent message Up or Down last put in the one-box input, by index.
+    one_box_recalled_prompt: Option<usize>,
+    /// The agent's command menu shows the slash command in the box, so Up, Down, Tab and Enter go
+    /// to that menu. Set by the terminal view, which copies the command into the agent's composer.
+    one_box_command_menu: bool,
+    /// The box sits on a new tab's start screen, with this placeholder. Enter sends the box's text
+    /// to the start screen and Escape closes it.
+    start_screen: Option<&'static str>,
+    /// A new tab's terminal is still waiting for its worktree, so Enter hands the command to the
+    /// terminal view to run there once it is ready, rather than in the main checkout.
+    holds_commands: bool,
+    /// The next prompt the agent under a one-box predicts, shown as ghost text while the box is
+    /// empty.
+    agent_suggestion: Option<String>,
 
     /// Weak handle to this input view for drop target data
     weak_view_handle: WeakViewHandle<Input>,
@@ -2549,7 +2577,8 @@ impl Input {
                 | AgentInputFooterEvent::OpenQuickInsertModal
                 | AgentInputFooterEvent::OpenToolbarEditor(_)
                 | AgentInputFooterEvent::OpenRichInput
-                | AgentInputFooterEvent::HideRichInput => {}
+                | AgentInputFooterEvent::HideRichInput
+                | AgentInputFooterEvent::AgentPickerClosed => {}
                 AgentInputFooterEvent::ToggledChipMenu { open } => {
                     me.handle_prompt_event(&PromptDisplayEvent::ToggleMenu { open: *open }, ctx);
                 }
@@ -3721,6 +3750,12 @@ impl Input {
             inline_terminal_menu_positioner,
             cached_agent_mode_hint_text: None,
             is_editor_empty_on_last_edit: is_editor_empty,
+            cli_agent_hint_override: None,
+            one_box_recalled_prompt: None,
+            one_box_command_menu: false,
+            start_screen: None,
+            holds_commands: false,
+            agent_suggestion: None,
             weak_view_handle: ctx.handle(),
             buy_credits_banner,
             agent_status_view,
@@ -5811,12 +5846,15 @@ impl Input {
             .count();
 
         // Image context is available whenever the feature flag is enabled and we're in AI input
-        // mode, including cloud mode
+        // mode, including cloud mode, or in a Claude Code or Codex box, whose agent reads the
+        // images itself whatever Warp model is selected.
+        let cli_agent_input_open =
+            CLIAgentSessionsModel::as_ref(ctx).is_input_open(self.terminal_view_id);
         let image_context_options = if FeatureFlag::ImageAsContext.is_enabled()
-            && matches!(ai_input_model.input_type(), InputType::AI)
+            && (cli_agent_input_open || matches!(ai_input_model.input_type(), InputType::AI))
         {
             ImageContextOptions::Enabled {
-                unsupported_model: !vision_supported,
+                unsupported_model: !cli_agent_input_open && !vision_supported,
                 is_processing_attached_images: self.is_processing_attached_images,
                 num_images_attached,
                 num_images_in_conversation,
@@ -6388,6 +6426,155 @@ impl Input {
             editor.attach_files(ctx);
         });
     }
+    /// Whether Up, Down, Tab, Enter and Escape go to the agent's command menu, which shows the slash
+    /// command in the box. While it does, Clinch's own slash commands stay off: their menu has
+    /// nothing to list for an agent and would take Escape. They come back once the box is empty.
+    pub(crate) fn set_one_box_command_menu(&mut self, showing: bool, ctx: &mut ViewContext<Self>) {
+        self.one_box_command_menu = showing;
+        if showing {
+            self.slash_command_model
+                .update(ctx, |model, ctx| model.disable(ctx));
+            if self.suggestions_mode_model.as_ref(ctx).is_slash_commands() {
+                self.close_slash_commands_menu(ctx);
+            }
+        }
+    }
+
+    /// Puts the box on a new tab's start screen, showing `placeholder`, or takes it off with `None`.
+    pub(crate) fn set_start_screen(
+        &mut self,
+        placeholder: Option<&'static str>,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        if self.start_screen != placeholder {
+            self.start_screen = placeholder;
+            self.set_zero_state_hint_text(ctx);
+        }
+    }
+
+    /// Shows `suggestion`, the agent's predicted next prompt, as ghost text while the box is empty,
+    /// or takes the last one away.
+    pub(crate) fn set_agent_suggestion(
+        &mut self,
+        suggestion: Option<String>,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        if self.agent_suggestion == suggestion {
+            return;
+        }
+        let previous = std::mem::replace(&mut self.agent_suggestion, suggestion);
+        self.editor.update(ctx, |editor, ctx| {
+            if previous.is_some()
+                && editor.current_autosuggestion_text() == previous.as_deref()
+                && editor.buffer_text(ctx).is_empty()
+            {
+                editor.clear_autosuggestion(ctx);
+            }
+        });
+        self.show_agent_suggestion(ctx);
+    }
+
+    /// Puts the agent's suggestion in the empty box as ghost text.
+    fn show_agent_suggestion(&mut self, ctx: &mut ViewContext<Self>) {
+        let Some(suggestion) = self.agent_suggestion.clone() else {
+            return;
+        };
+        if !CLIAgentSessionsModel::as_ref(ctx).is_input_open(self.terminal_view_id)
+            || !self.buffer_text(ctx).is_empty()
+            || self.editor.as_ref(ctx).current_autosuggestion_text() == Some(suggestion.as_str())
+        {
+            return;
+        }
+        let autosuggestion_type = if self.ai_input_model.as_ref(ctx).input_type().is_ai() {
+            AutosuggestionType::AgentModeQuery {
+                context_block_ids: Vec::new(),
+                was_intelligent_autosuggestion: false,
+            }
+        } else {
+            AutosuggestionType::Command {
+                was_intelligent_autosuggestion: false,
+            }
+        };
+        self.set_autosuggestion(suggestion, autosuggestion_type, ctx);
+    }
+
+    /// Tab in an empty box accepts the agent's suggestion, as it does in the agent's composer.
+    fn accept_agent_suggestion(&mut self, ctx: &mut ViewContext<Self>) -> bool {
+        let Some(suggestion) = self.agent_suggestion.as_deref() else {
+            return false;
+        };
+        let showing = self.buffer_text(ctx).is_empty()
+            && self.editor.as_ref(ctx).current_autosuggestion_text() == Some(suggestion);
+        if showing {
+            self.editor
+                .update(ctx, |editor, ctx| editor.insert_full_autosuggestion(ctx));
+        }
+        showing
+    }
+
+    /// While `hold`, Enter hands the command to the terminal view instead of running it.
+    pub(crate) fn set_holds_commands(&mut self, hold: bool) {
+        self.holds_commands = hold;
+    }
+
+    /// Sends `key` to the agent's command menu when it shows the box's slash command.
+    fn forward_key_to_one_box_command_menu(
+        &mut self,
+        key: OneBoxKey,
+        ctx: &mut ViewContext<Self>,
+    ) -> bool {
+        if self.one_box_command_menu {
+            ctx.emit(Event::ForwardKeyToOneBoxAgent(key));
+        }
+        self.one_box_command_menu
+    }
+
+    /// In one-box input, Up and Down walk the agent session's own earlier messages, as its
+    /// composer does, instead of Clinch's shell history. Up starts from an empty box, and either key
+    /// keeps walking while the box still shows the recalled message untouched; Down past the newest
+    /// empties the box. With none of the session's messages known, Up goes to the agent, whose own
+    /// history then shows in its composer. Returns whether the key was taken.
+    fn walk_one_box_prompt_history(&mut self, older: bool, ctx: &mut ViewContext<Self>) -> bool {
+        if one_box_agent(&self.model.lock(), self.terminal_view_id, ctx).is_none() {
+            return false;
+        }
+        let prompts: Vec<String> = CLIAgentSessionsModel::as_ref(ctx)
+            .session(self.terminal_view_id)
+            .map(|session| {
+                session
+                    .prompt_history
+                    .prompts
+                    .iter()
+                    .map(|prompt| prompt.text.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+        let buffer = self.buffer_text(ctx);
+        let recalled = self
+            .one_box_recalled_prompt
+            .filter(|&index| prompts.get(index).is_some_and(|prompt| *prompt == buffer));
+        if recalled.is_none() && !buffer.is_empty() {
+            return false;
+        }
+        let next = match (recalled, older) {
+            (None, false) => return false,
+            (None, true) if prompts.is_empty() => {
+                ctx.emit(Event::ForwardKeyToOneBoxAgent(OneBoxKey::Up));
+                return true;
+            }
+            (None, true) => Some(prompts.len() - 1),
+            (Some(index), true) => Some(index.saturating_sub(1)),
+            (Some(index), false) => (index + 1 < prompts.len()).then_some(index + 1),
+        };
+        self.one_box_recalled_prompt = next;
+        let text = next.map_or("", |index| prompts[index].as_str());
+        self.editor.update(ctx, |editor, ctx| {
+            editor.set_buffer_text(text, ctx);
+            editor.move_to_buffer_end(ctx);
+        });
+        true
+    }
+
     pub(super) fn insert_into_cli_agent_rich_input(
         &mut self,
         text: &str,
@@ -6691,6 +6878,9 @@ impl Input {
         if self.is_locked_in_shell_mode(ctx) {
             return Cow::Borrowed(AGENT_MODE_AI_DISABLED_AUTODETECTION_DISABLED_HINT_TEXT);
         }
+        if let Some(hint) = self.cli_agent_hint_override {
+            return Cow::Borrowed(hint);
+        }
 
         CLIAgentSessionsModel::as_ref(ctx)
             .session(self.terminal_view_id)
@@ -6704,7 +6894,25 @@ impl Input {
             .unwrap_or(Cow::Borrowed(CLI_AGENT_RICH_INPUT_HINT_TEXT))
     }
 
+    /// Shows `hint` in place of the agent input's usual placeholder, or the usual one for `None`.
+    pub(crate) fn set_cli_agent_hint_override(
+        &mut self,
+        hint: Option<&'static str>,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        if self.cli_agent_hint_override != hint {
+            self.cli_agent_hint_override = hint;
+            self.set_zero_state_hint_text(ctx);
+        }
+    }
+
     pub fn set_zero_state_hint_text(&mut self, ctx: &mut ViewContext<Self>) {
+        if let Some(placeholder) = self.start_screen {
+            self.editor.update(ctx, |editor, ctx| {
+                editor.set_placeholder_text(placeholder, ctx);
+            });
+            return;
+        }
         if CLIAgentSessionsModel::as_ref(ctx).is_input_open(self.terminal_view_id) {
             let hint = self.cli_agent_rich_input_hint_text(ctx);
             self.editor.update(ctx, |editor, ctx| {
@@ -7071,6 +7279,15 @@ impl Input {
 
     pub fn try_execute_command(&mut self, command: &str, ctx: &mut ViewContext<Self>) -> bool {
         self.try_execute_command_with_options(command, false, ctx)
+    }
+
+    /// Runs `command` in the shell, leaving the box's text alone.
+    pub(crate) fn execute_command_keeping_text(
+        &mut self,
+        command: &str,
+        ctx: &mut ViewContext<Self>,
+    ) -> bool {
+        self.try_execute_command_with_options(command, true, ctx)
     }
 
     fn try_execute_command_with_options(
@@ -8723,6 +8940,9 @@ impl Input {
     }
 
     fn editor_up(&mut self, ctx: &mut ViewContext<Self>) {
+        if self.forward_key_to_one_box_command_menu(OneBoxKey::Up, ctx) {
+            return;
+        }
         if self.should_show_auth_secret_ftux(ctx) {
             if let Some(ftux_view) = self.auth_secret_ftux_view().cloned() {
                 ftux_view.update(ctx, |view, ctx| {
@@ -8868,6 +9088,11 @@ impl Input {
 
         // Otherwise, check if the cursor is on the first row and open the
         // history up menu.
+        if self.editor.as_ref(ctx).single_cursor_on_first_row(ctx)
+            && self.walk_one_box_prompt_history(true, ctx)
+        {
+            return;
+        }
         let editor = self.editor.as_ref(ctx);
         if editor.single_cursor_on_first_row(ctx) {
             if FeatureFlag::InlineHistoryMenu.is_enabled()
@@ -8956,6 +9181,15 @@ impl Input {
     }
 
     fn editor_escape(&mut self, ctx: &mut ViewContext<Self>) {
+        if self.start_screen.is_some() {
+            ctx.emit(Event::StartScreenEscape);
+            return;
+        }
+        // The terminal view deletes the command from the box and the agent's composer.
+        if self.one_box_command_menu {
+            ctx.emit(Event::Escape);
+            return;
+        }
         let vim_mode = self.editor.as_ref(ctx).vim_mode(ctx);
         let has_attached_context = {
             let context_model = self.ai_context_model.as_ref(ctx);
@@ -9122,6 +9356,9 @@ impl Input {
     }
 
     fn editor_down(&mut self, ctx: &mut ViewContext<Self>) {
+        if self.forward_key_to_one_box_command_menu(OneBoxKey::Down, ctx) {
+            return;
+        }
         // For some input suggestion modes, the menu handles its own actions.
         let handled = match self.suggestions_mode_model.as_ref(ctx).mode() {
             InputSuggestionsMode::AIContextMenu { .. } => {
@@ -9234,6 +9471,13 @@ impl Input {
                     view.select_down(ctx);
                 });
             }
+            return;
+        }
+
+        if !self.suggestions_mode_model.as_ref(ctx).is_visible()
+            && self.editor.as_ref(ctx).single_cursor_on_last_row(ctx)
+            && self.walk_one_box_prompt_history(false, ctx)
+        {
             return;
         }
 
@@ -9793,6 +10037,13 @@ impl Input {
 
         self.check_slash_menu_disabled_state(ctx);
 
+        // Emptying the box brings the agent's suggestion back, once this edit is handled.
+        if self.agent_suggestion.is_some()
+            && matches!(event, EditorEvent::Edited(_) | EditorEvent::BufferReplaced)
+        {
+            ctx.spawn(async {}, |me, (), ctx| me.show_agent_suggestion(ctx));
+        }
+
         let is_ai_input_enabled = self.ai_input_model.as_ref(ctx).is_ai_input_enabled();
 
         if Self::is_nl_ai_autosuggestion_triggering_event(event)
@@ -9816,6 +10067,10 @@ impl Input {
                 // events are dispatched in the UI framework, we would receive an Edited event
                 // immediately from clearing the input box. But we don't want that.
                 // Only processing the user typed events should be good enough here.
+
+                if self.one_box_command_menu || is_agent_command(&self.buffer_text(ctx)) {
+                    ctx.emit(Event::OneBoxCommandEdited);
+                }
 
                 if matches!(
                     edit_origin,
@@ -9882,8 +10137,10 @@ impl Input {
                         check_alias_expansion = true;
                     }
 
-                    // Check if "@" was just typed in a valid context
+                    // Check if "@" was just typed in a valid context. In a slash command the
+                    // agent's own menu has the keys, and it lists files for "@" itself.
                     if FeatureFlag::AIContextMenuEnabled.is_enabled()
+                        && !self.one_box_command_menu
                         && (is_ai_input_enabled || FeatureFlag::AtMenuOutsideOfAIMode.is_enabled())
                         && Some(PlainTextEditorViewAction::InsertChar) == last_action
                         && *edit_origin == EditOrigin::UserTyped
@@ -11001,12 +11258,15 @@ impl Input {
     }
 
     /// Process paste event by checking clipboard for images and handling appropriately.
-    fn process_paste_event(&mut self, ctx: &mut ViewContext<Self>) {
+    pub(crate) fn process_paste_event(&mut self, ctx: &mut ViewContext<Self>) {
         // Read from app clipboard
         let content = ctx.clipboard().read();
 
-        // If AI is disabled, attachment isn't possible
-        if !AISettings::as_ref(ctx).is_any_ai_enabled(ctx) {
+        // If AI is disabled, attachment isn't possible, except in a Claude Code or Codex box: the
+        // agent takes the images, not Warp's AI, which Clinch always has off.
+        let cli_agent_input_open =
+            CLIAgentSessionsModel::as_ref(ctx).is_input_open(self.terminal_view_id);
+        if !cli_agent_input_open && !AISettings::as_ref(ctx).is_any_ai_enabled(ctx) {
             self.insert_clipboard_text_content(ctx, content);
             return;
         }
@@ -11158,7 +11418,9 @@ impl Input {
 
         let is_buffer_empty = self.buffer_text(ctx).is_empty();
         let in_active_agent_view = self.agent_view_controller.as_ref(ctx).is_active();
-        if is_buffer_empty || in_active_agent_view {
+        if CLIAgentSessionsModel::as_ref(ctx).is_input_open(self.terminal_view_id) {
+            self.update_image_context_options(ctx);
+        } else if is_buffer_empty || in_active_agent_view {
             self.set_input_mode_agent(true, ctx);
             self.update_image_context_options(ctx);
         }
@@ -11183,8 +11445,11 @@ impl Input {
     ) {
         self.maybe_enter_agent_view_for_image_add(ctx);
 
-        // Switch to AI mode with block-level lock, unless already AI-mode-locked
-        if !self.is_locked_in_ai_mode(ctx) {
+        // Switch to AI mode with block-level lock, unless already AI-mode-locked. A Claude Code or
+        // Codex box keeps its mode; its image options only need to be current.
+        if CLIAgentSessionsModel::as_ref(ctx).is_input_open(self.terminal_view_id) {
+            self.update_image_context_options(ctx);
+        } else if !self.is_locked_in_ai_mode(ctx) {
             self.set_input_mode_agent(true, ctx);
             self.update_image_context_options(ctx);
         }
@@ -12467,6 +12732,12 @@ impl Input {
             _ => {}
         }
 
+        // In place of an agent's composer, Shift+Tab cycles the agent's permission mode.
+        if one_box_agent(&self.model.lock(), self.terminal_view_id, ctx).is_some() {
+            ctx.emit(Event::ForwardKeyToOneBoxAgent(OneBoxKey::ShiftTab));
+            return;
+        }
+
         if let Some(workflows_info_view) = &self
             .workflows_state
             .selected_workflow_state
@@ -12614,6 +12885,12 @@ impl Input {
     /// If tab is not bound to "open completion suggestions menu" nor is the suggestions menu
     /// already open, inserts a tab char into the input editor.
     fn input_tab(&mut self, ctx: &mut ViewContext<Self>) {
+        if self.forward_key_to_one_box_command_menu(OneBoxKey::Tab, ctx) {
+            return;
+        }
+        if self.accept_agent_suggestion(ctx) {
+            return;
+        }
         if matches!(
             self.suggestions_mode_model.as_ref(ctx).mode(),
             InputSuggestionsMode::AIContextMenu { .. }
@@ -12905,6 +13182,13 @@ impl Input {
     /// is an active and long running command; in such a state, the enter keypress should be
     /// handled by the ongoing process corresponding to the active/long running command.
     pub(crate) fn input_enter(&mut self, ctx: &mut ViewContext<Self>) {
+        if self.start_screen.is_some() || self.holds_commands {
+            ctx.emit(Event::StartScreenSubmitted(self.buffer_text(ctx)));
+            return;
+        }
+        if self.forward_key_to_one_box_command_menu(OneBoxKey::Enter, ctx) {
+            return;
+        }
         if CLIAgentSessionsModel::as_ref(ctx).is_input_open(self.terminal_view_id) {
             // If the @ context menu is open, Enter selects the highlighted item
             // instead of submitting the CLI agent input.
@@ -13408,6 +13692,10 @@ impl Input {
     /// Shared submit path for Enter (default mode) and Ctrl+Enter (`submit_on_ctrl_enter` mode);
     /// callers must have already handled menu-intercept cases.
     fn emit_submit_cli_agent_input(&mut self, ctx: &mut ViewContext<Self>) {
+        // The agent's composer already holds the command; typing it again would double it.
+        if self.forward_key_to_one_box_command_menu(OneBoxKey::Enter, ctx) {
+            return;
+        }
         // When the `!` prefix was stripped (shell mode in CLI agent input),
         // prepend it back so the CLI agent receives the mode-switch prefix,
         // then exit shell mode so the next prompt starts in AI mode.

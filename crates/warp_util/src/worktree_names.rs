@@ -257,6 +257,27 @@ pub fn generate_worktree_branch_name(existing: &HashSet<&str>) -> String {
     generate_unique_name(existing, &mut rand::thread_rng())
 }
 
+/// Whether `name` is one [`generate_worktree_branch_name`] could have made: two to
+/// [`MAX_WORD_COUNT`] of its words joined by `-`, or its numeric fallback. Words can contain `-`
+/// themselves, so the name is split into whole words rather than at every `-`.
+pub fn is_generated_worktree_name(name: &str) -> bool {
+    fn words_in(rest: &str, words: usize) -> bool {
+        if words > MAX_WORD_COUNT {
+            return false;
+        }
+        WORDS.iter().any(|word| match rest.strip_prefix(word) {
+            Some("") => words + 1 >= 2,
+            Some(after) => after
+                .strip_prefix('-')
+                .is_some_and(|after| words_in(after, words + 1)),
+            None => false,
+        })
+    }
+    name.strip_prefix("worktree-")
+        .is_some_and(|digits| !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()))
+        || words_in(name, 0)
+}
+
 #[cfg(test)]
 #[path = "worktree_names_tests.rs"]
 mod tests;

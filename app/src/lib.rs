@@ -51,6 +51,8 @@ mod linear;
 mod local_control;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 mod login_item;
+#[cfg(feature = "local_fs")]
+mod managed_worktrees;
 mod menu;
 mod modal;
 mod network;
@@ -1907,6 +1909,8 @@ pub(crate) fn initialize_app(
     });
     ctx.add_singleton_model(move |_| RestoredAgentConversations::new(multi_agent_conversations));
     ctx.add_singleton_model(|_| CLIAgentSessionsModel::new());
+    #[cfg(feature = "local_fs")]
+    ctx.add_singleton_model(managed_worktrees::ManagedWorktreesModel::new);
     let agent_restore_queue = ctx
         .add_singleton_model(crate::terminal::cli_agent_sessions::restore::AgentRestoreQueue::new);
     agent_restore_queue.update(ctx, |queue, ctx| {

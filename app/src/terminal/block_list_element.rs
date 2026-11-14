@@ -86,6 +86,7 @@ use crate::terminal::model::escape_sequences::{
 use crate::terminal::model::index::Point as IndexPoint;
 use crate::terminal::model::selection::{SelectAction, SelectionPoint};
 use crate::terminal::model::terminal_model::BlockIndex;
+use crate::terminal::one_box_composer::{GridRows, OneBoxComposer};
 use crate::terminal::safe_mode_settings::get_secret_obfuscation_mode;
 use crate::terminal::view::TerminalAction;
 use crate::terminal::warpify::SubshellSource;
@@ -723,6 +724,9 @@ pub struct BlockListElement {
     /// are suppressed instead.
     hide_cursor_cell: bool,
 
+    /// Covers the running agent's empty composer so the rich input can take its place.
+    one_box_composer: Option<OneBoxComposer>,
+
     /// Child Elements to use for rich content inserted into the block list
     rich_content_elements: HashMap<EntityId, Box<dyn Element>>,
     rich_content_metadata: HashMap<EntityId, RichContentMetadata>,
@@ -987,6 +991,7 @@ impl BlockListElement {
             use_ligature_rendering: false,
             block_cursor_width_scale: 1.,
             hide_cursor_cell: false,
+            one_box_composer: None,
             active_filter_editor_block_index: None,
             filtered_blocks: None,
             rich_content_elements: HashMap::new(),
@@ -1026,6 +1031,11 @@ impl BlockListElement {
 
     pub fn with_hide_cursor_cell(mut self) -> Self {
         self.hide_cursor_cell = true;
+        self
+    }
+
+    pub(crate) fn with_one_box_composer(mut self, one_box_composer: OneBoxComposer) -> Self {
+        self.one_box_composer = Some(one_box_composer);
         self
     }
 
@@ -2521,6 +2531,7 @@ impl BlockListElement {
         cursor_hint_text: Option<&mut Box<dyn Element>>,
         image_metadata: &HashMap<u32, StoredImageMetadata>,
         agent_view_state: &AgentViewState,
+        one_box_composer: Option<&OneBoxComposer>,
         ctx: &mut PaintContext,
         app: &AppContext,
     ) {
@@ -2779,6 +2790,25 @@ impl BlockListElement {
                             .into()
                     },
                     app,
+                );
+            }
+
+            if let Some(one_box_composer) =
+                one_box_composer.filter(|_| block.is_active_and_long_running())
+            {
+                one_box_composer.paint_cover(
+                    block.output_grid().grid_handler(),
+                    GridRows {
+                        origin: *grid_origin,
+                        bounds: block_grid_params.bounds,
+                        cell_height: cell_size_height,
+                    },
+                    block_grid_params
+                        .grid_render_params
+                        .warp_theme
+                        .background()
+                        .into(),
+                    ctx,
                 );
             }
 
@@ -4105,6 +4135,7 @@ impl Element for BlockListElement {
                         self.cursor_hint_text_element.as_mut(),
                         &model.image_id_to_metadata,
                         agent_view_state,
+                        self.one_box_composer.as_ref(),
                         ctx,
                         app,
                     );
