@@ -37,7 +37,9 @@ use crate::launch_configs::launch_config::LaunchConfig;
 use crate::menu::{MenuAction, MenuItem, MenuItemFields};
 use crate::pane_group::{PaneGroup, PaneId};
 use crate::shell_indicator::ShellIndicatorType;
-use crate::terminal::cli_agent_sessions::{session_context_enabled, CLIAgentSessionsModel};
+use crate::terminal::cli_agent_sessions::{
+    session_context_enabled, CLIAgentSession, CLIAgentSessionsModel,
+};
 use crate::terminal::session_settings::SessionSettings;
 use crate::terminal::shared_session::render_util::shared_session_indicator_color;
 use crate::terminal::view::agent_sleep::SleepBlocker;
@@ -508,7 +510,7 @@ impl TabData {
                         .into_item(),
                     None => item
                         .with_disabled(true)
-                        .with_tooltip("The conversation has not been identified yet. Resume it using its session ID to reconnect this tab.")
+                        .with_tooltip(Self::unidentified_session_tooltip(session))
                         .into_item(),
                 });
             }
@@ -555,6 +557,17 @@ impl TabData {
 
     fn copyable_metadata_value(value: Option<String>) -> Option<String> {
         value.filter(|value| !value.trim().is_empty())
+    }
+
+    /// Codex runs its `SessionStart` hook with the first submitted message, not at launch,
+    /// so a fresh Codex tab has no ID to copy yet. Any other unidentified session has
+    /// hooks that did not reach this tab.
+    fn unidentified_session_tooltip(session: &CLIAgentSession) -> &'static str {
+        if session.agent == CLIAgent::Codex && !session.has_observed_turn_activity {
+            "Codex shares its session ID when you send your first message."
+        } else {
+            "The conversation has not been identified yet. Resume it using its session ID to reconnect this tab."
+        }
     }
 
     fn rename_menu_items(

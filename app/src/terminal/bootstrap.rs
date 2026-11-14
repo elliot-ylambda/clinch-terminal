@@ -115,94 +115,98 @@ pub fn should_use_rc_file_bootstrap_method(
 /// The directive above instructs this function to replace that line with the
 /// contents of the file in our asset cache with the path `bundled/bootstrap/zsh_body.sh`.
 ///
-/// At the moment, this interpolation is only performed for the top-level file,
-/// and is not performed recursively, but it would be useful to add such support
-/// in the future.
+/// Included files may include further files. `zsh.sh` and `bash.sh` include their
+/// `*_body.sh`, which in turn include shared snippets such as `clinch_codex.sh`.
 pub fn script_for_shell(shell_type: ShellType, assets: &dyn AssetProvider) -> Cow<'static, [u8]> {
+    BOOTSTRAP_CACHE
+        .get_or_insert(&shell_type, || assemble_script(shell_type, assets))
+        .into()
+}
+
+/// Real assets nest two levels deep. The limit turns an accidental include cycle into a
+/// clear startup panic instead of a stack overflow.
+const MAX_INCLUDE_DEPTH: usize = 8;
+
+/// Builds the bootstrap script for `shell_type` without consulting [`BOOTSTRAP_CACHE`].
+fn assemble_script(shell_type: ShellType, assets: &dyn AssetProvider) -> Vec<u8> {
     let file = match shell_type {
         ShellType::Bash => "bash.sh",
         ShellType::Zsh => "zsh.sh",
         ShellType::Fish => "fish.sh",
         ShellType::PowerShell => "pwsh.ps1",
     };
+    let bootstrap = read_bootstrap_asset(assets, &format!("bundled/bootstrap/{file}"));
+    let included_files = MemoMap::new();
+    let mut lines = Vec::new();
+    push_expanded_lines(
+        bootstrap.trim_start_matches(BYTE_ORDER_MARK),
+        assets,
+        &included_files,
+        0,
+        &mut lines,
+    );
 
-    BOOTSTRAP_CACHE
-        .get_or_insert(&shell_type, || {
-            let file_path = format!("bundled/bootstrap/{file}");
-            let bootstrap = assets
-                .get(&file_path)
-                .unwrap_or_else(|_| panic!("failed to retrieve {file_path} from assets"));
-
-            // Interpret the file as UTF-8.  We do this in an unchecked way
-            // for performance, expecting that any issues here will be caught by
-            // unit tests.
-            let bootstrap = unsafe { String::from_utf8_unchecked(bootstrap.to_vec()) };
-
-            let additional_files = memo_map::MemoMap::new();
-
-            // Parse through the file, looking for any lines which start with
-            // "#include", and replacing that line with the contents of the file
-            // located at the path specified.
-            //
-            // We trim most leading and all trailing whitespace from lines, and
-            // drop all empty lines and lines that only contain a comment.  We
-            // keep a single leading space on each line, if one exists, to
-            // avoid interfering with histignorespace behavior.
-            //
-            // This minimizes the number of bytes we send over the pty during the
-            // bootstrap process.
-            fn trim_and_borrow_line(mut line: &str) -> Cow<'_, str> {
-                let len = line.len();
-                let trimmed_len = line.trim_start().len();
-                if trimmed_len < len {
-                    let trimmed_chars = len - trimmed_len;
-                    line = &line[trimmed_chars - 1..];
-                }
-                Cow::Borrowed(line.trim_end())
-            }
-            let mut script = bootstrap
-                .trim_start_matches(BYTE_ORDER_MARK)
-                .split('\n')
-                .map(trim_and_borrow_line)
-                .flat_map(|line| {
-                    if let Some(path) = line.strip_prefix("#include ") {
-                        additional_files
-                            .get_or_insert(path, || {
-                                let data = assets.get(path).unwrap_or_else(|_| {
-                                    panic!("failed to retrieve {path} from assets")
-                                });
-                                let data_string =
-                                    unsafe { String::from_utf8_unchecked(data.to_vec()) };
-                                data_string.replace(
-                                    "@@USING_CON_PTY_BOOLEAN@@",
-                                    &(cfg!(windows).to_string()),
-                                )
-                            })
-                            .split('\n')
-                            .map(trim_and_borrow_line)
-                            .collect_vec()
-                    } else {
-                        vec![line]
-                    }
-                })
-                // Filter out empty lines and comments, to minimize the amount
-                // of data we send over the pty during the bootstrap process.
-                .filter(|line| {
-                    let line = line.trim_start();
-                    !(line.is_empty()
-                        || line.starts_with('#')
-                        || shell_type == ShellType::PowerShell
-                            && line
-                                .starts_with("[Diagnostics.CodeAnalysis.SuppressMessageAttribute"))
-                })
-                .join("\n");
-
-            // Make sure there's a newline at the end of the bootstrap script,
-            // otherwise we'll never submit the final line to the shell.
-            script.push('\n');
-            script.into_bytes()
+    // Filter out empty lines and comments, to minimize the amount
+    // of data we send over the pty during the bootstrap process.
+    let mut script = lines
+        .into_iter()
+        .filter(|line| {
+            let line = line.trim_start();
+            !(line.is_empty()
+                || line.starts_with('#')
+                || shell_type == ShellType::PowerShell
+                    && line.starts_with("[Diagnostics.CodeAnalysis.SuppressMessageAttribute"))
         })
-        .into()
+        .join("\n");
+
+    // Make sure there's a newline at the end of the bootstrap script,
+    // otherwise we'll never submit the final line to the shell.
+    script.push('\n');
+    script.into_bytes()
+}
+
+/// Appends the trimmed lines of `text`, replacing each `#include <path>` line with the
+/// expanded lines of that asset. An unexpanded directive would otherwise be dropped
+/// silently as a comment.
+fn push_expanded_lines<'a>(
+    text: &'a str,
+    assets: &dyn AssetProvider,
+    included_files: &'a MemoMap<String, String>,
+    depth: usize,
+    lines: &mut Vec<&'a str>,
+) {
+    for line in text.split('\n').map(trim_line) {
+        let Some(path) = line.strip_prefix("#include ") else {
+            lines.push(line);
+            continue;
+        };
+        assert!(
+            depth < MAX_INCLUDE_DEPTH,
+            "bootstrap includes nest deeper than {MAX_INCLUDE_DEPTH} levels at {path}; check for an include cycle"
+        );
+        let included = included_files.get_or_insert(path, || {
+            read_bootstrap_asset(assets, path)
+                .replace("@@USING_CON_PTY_BOOLEAN@@", &cfg!(windows).to_string())
+        });
+        push_expanded_lines(included, assets, included_files, depth + 1, lines);
+    }
+}
+
+/// Trims most leading and all trailing whitespace from a line. A single leading space is
+/// kept, if one exists, to avoid interfering with histignorespace behavior. This minimizes
+/// the number of bytes we send over the pty during the bootstrap process.
+fn trim_line(line: &str) -> &str {
+    let leading = line.len() - line.trim_start().len();
+    line[leading.saturating_sub(1)..].trim_end()
+}
+
+fn read_bootstrap_asset(assets: &dyn AssetProvider, path: &str) -> String {
+    let data = assets
+        .get(path)
+        .unwrap_or_else(|_| panic!("failed to retrieve {path} from assets"));
+    // Interpret the file as UTF-8. We do this in an unchecked way for performance,
+    // expecting that any issues here will be caught by unit tests.
+    unsafe { String::from_utf8_unchecked(data.to_vec()) }
 }
 
 /// Generates a cryptographically random session ID for use as both a session

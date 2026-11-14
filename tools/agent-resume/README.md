@@ -63,7 +63,9 @@ capture (agent SessionStart hooks)          replay (Rust, in Clinch)
   and functions, noninteractive scripts, and other terminals remain unchanged. Explicit
   remote connections and the `agents` overview retain their shared-server behavior.
 - **Copy, fork, and transfer use the live conversation.** Both providers expose the same tab menu.
-  An unidentified session keeps a disabled copy row with an explanation. Codex forks can
+  An unidentified session keeps a disabled copy row with an explanation. Codex runs its
+  `SessionStart` hook with the first submitted message rather than at launch, so a new Codex
+  tab says it will have an ID after that message. Codex forks can
   use a known live ID even if the registry is missing. Background polling follows native
   Codex forks only after verifying the recorded process owns this pane and tty. Conflicting
   identities wait for that check; a missing fork target produces visible feedback.
