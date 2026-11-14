@@ -26,6 +26,7 @@ use crate::terminal::shared_session::{
 use crate::util::image::{infer_mime_type, MAX_IMAGE_SIZE_BYTES_FOR_CLI_AGENT, MIME_SNIFF_BYTES};
 mod warpify_footer;
 
+use std::ops::RangeInclusive;
 use std::path::Path;
 use std::sync::{Arc, LazyLock};
 use std::time::Duration;
@@ -99,6 +100,14 @@ use crate::view_components::action_button::{
 /// distinct stdin read.)
 const CLI_AGENT_PTY_WRITE_DELAY: Duration = Duration::from_millis(50);
 
+/// Text longer than this goes to Claude Code as a marked paste.
+///
+/// macOS moves about 1 KB through a PTY at a time, so longer unmarked text reaches Claude Code in
+/// pieces and it can drop the earlier ones. Claude Code already treats text of this size as a
+/// paste, so marking it changes nothing else. Shorter text stays unmarked because Claude Code
+/// labels every marked paste as pasted, and a user's own prompt shouldn't read that way.
+const CLAUDE_UNMARKED_TEXT_MAX_BYTES: usize = 800;
+
 /// Longer delay for agents (like Copilot) that need extra time after a
 /// bracketed paste before they will accept a submit keystroke.
 const CLI_AGENT_BRACKETED_PASTE_ENTER_DELAY: Duration = Duration::from_millis(300);
@@ -107,14 +116,6 @@ const CLI_AGENT_BRACKETED_PASTE_ENTER_DELAY: Duration = Duration::from_millis(30
 /// The CLI agent needs time to read from the system clipboard before
 /// we overwrite it with the next image.
 const CLI_AGENT_IMAGE_PASTE_DELAY: Duration = Duration::from_millis(300);
-
-/// Text longer than this goes to Claude Code as a marked paste.
-///
-/// macOS moves about 1 KB through a PTY at a time, so longer unmarked text reaches Claude Code in
-/// pieces and it can drop the earlier ones. Claude Code already treats text of this size as a
-/// paste, so marking it changes nothing else. Shorter text stays unmarked because Claude Code
-/// labels every marked paste as pasted, and a user's own prompt shouldn't read that way.
-const CLAUDE_UNMARKED_TEXT_MAX_BYTES: usize = 800;
 
 /// ASCII prefixes that CLI agents use to switch input modes (e.g. `!` for bash
 /// mode in Claude Code). When the rich input starts with one of these, the
@@ -176,6 +177,69 @@ impl NativeComposer {
     }
 }
 
+/// A provider TUI's native composer and the screen rows that draw it.
+#[derive(Debug, PartialEq)]
+pub(crate) struct NativeComposerArea {
+    /// Grid rows of the composer box: Claude Code's two rules and the rows between them, or
+    /// Codex's background band including its blank inset rows.
+    pub(crate) rows: RangeInclusive<usize>,
+    composer: NativeComposer,
+    /// The argument hint shown after a completed slash command, such as `[low|medium|high]`.
+    hint: Option<String>,
+    /// The dim text Claude Code draws in its empty composer: a predicted next prompt, or one of
+    /// its fixed `Try "…"` examples.
+    placeholder: Option<String>,
+}
+
+impl NativeComposerArea {
+    /// The next prompt Claude Code predicts, which Tab accepts in its own composer. Its fixed
+    /// `Try "…"` examples are not suggestions.
+    pub(crate) fn suggestion(&self) -> Option<&str> {
+        self.placeholder
+            .as_deref()
+            .filter(|text| !text.starts_with("Try \""))
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.composer == NativeComposer::Empty
+    }
+
+    /// The unsent text the composer shows, when it can be read.
+    pub(crate) fn draft(&self) -> Option<&str> {
+        match &self.composer {
+            NativeComposer::Draft(draft) => Some(draft),
+            NativeComposer::Empty | NativeComposer::Unreadable => None,
+        }
+    }
+
+    /// The argument hint the agent shows after a completed slash command, if any.
+    pub(crate) fn hint(&self) -> Option<&str> {
+        self.hint.as_deref()
+    }
+}
+
+/// Whether a provider TUI has drawn anything on its visible screen yet.
+pub(crate) fn native_screen_has_text(grid: &GridHandler) -> bool {
+    let first_visible_row = grid.history_size();
+    let past_last_visible_row = first_visible_row
+        .saturating_add(grid.visible_rows())
+        .min(grid.total_rows());
+    (first_visible_row..past_last_visible_row)
+        .any(|row_idx| grid.row(row_idx).is_some() && !grid_row_is_blank(grid, row_idx))
+}
+
+/// `None` when `agent` has no composer Clinch can read, or none is visible.
+pub(crate) fn native_composer_area(
+    grid: &GridHandler,
+    agent: CLIAgent,
+) -> Option<NativeComposerArea> {
+    match agent {
+        CLIAgent::Claude => claude_native_composer_area(grid),
+        CLIAgent::Codex => codex_native_composer_area(grid),
+        _ => None,
+    }
+}
+
 /// The grid a native Claude Code or Codex TUI draws into: the alt screen in full-screen mode,
 /// otherwise the running block's output.
 pub(crate) fn cli_agent_native_grid(model: &TerminalModel) -> &GridHandler {
@@ -195,25 +259,63 @@ fn grid_row_is_blank(grid: &GridHandler, row_idx: usize) -> bool {
         .is_some_and(|row| (0..row.len()).all(|col| matches!(row[col].c, '\0' | ' ' | '\u{a0}')))
 }
 
+/// Claude Code's rules above and below its composer: a line of `─` across the pane. A rule can
+/// carry one label near its right end, between spaces, such as the session's name after `/rename`
+/// (`───── name ─`). In a narrow pane a long label is cut short and fills almost the whole rule
+/// (` long-na… ─`).
 fn is_claude_composer_rule(grid: &GridHandler, row_idx: usize) -> bool {
+    /// The most `─` Claude Code draws after a label.
+    const MAX_RULE_AFTER_LABEL: usize = 3;
     let Some(row) = grid.row(row_idx) else {
         return false;
     };
-    let columns = grid.columns();
+    let columns = grid.columns().min(row.len());
     if columns == 0 {
         return false;
     }
 
-    let mut rule_cells = 0usize;
-    for col in 0..columns.min(row.len()) {
-        match row[col].c {
-            CLAUDE_COMPOSER_RULE => rule_cells += 1,
-            '\0' | ' ' => {}
-            _ => return false,
-        }
+    let cells: Vec<char> = (0..columns)
+        .map(|col| match row[col].c {
+            '\0' | '\u{a0}' => ' ',
+            c => c,
+        })
+        .collect();
+    if cells.iter().all(|&c| c == CLAUDE_COMPOSER_RULE || c == ' ') {
+        let rule_cells = cells.iter().filter(|&&c| c == CLAUDE_COMPOSER_RULE).count();
+        return rule_cells >= columns.min(8)
+            && rule_cells.saturating_mul(4) >= columns.saturating_mul(3);
     }
 
-    rule_cells >= columns.min(8) && rule_cells.saturating_mul(4) >= columns.saturating_mul(3)
+    // A labeled rule still runs from one edge of the pane to the other.
+    let (Some(first), Some(last)) = (
+        cells.iter().position(|&c| c != ' '),
+        cells.iter().rposition(|&c| c != ' '),
+    ) else {
+        return false;
+    };
+    if first > 1 || last + 2 < columns {
+        return false;
+    }
+    let line: String = cells[first..=last].iter().collect();
+    let before_tail = line.trim_end_matches(CLAUDE_COMPOSER_RULE);
+    let tail = line.chars().count() - before_tail.chars().count();
+    let Some(before_tail) = before_tail.strip_suffix(' ') else {
+        return false;
+    };
+    let label = if before_tail.starts_with(CLAUDE_COMPOSER_RULE) {
+        match before_tail
+            .trim_start_matches(CLAUDE_COMPOSER_RULE)
+            .strip_prefix(' ')
+        {
+            Some(label) => label,
+            None => return false,
+        }
+    } else {
+        before_tail
+    };
+    (1..=MAX_RULE_AFTER_LABEL).contains(&tail)
+        && !label.trim().is_empty()
+        && !label.contains(CLAUDE_COMPOSER_RULE)
 }
 
 fn claude_composer_prompt_column(grid: &GridHandler, row_idx: usize) -> Option<usize> {
@@ -225,6 +327,11 @@ fn claude_composer_prompt_column(grid: &GridHandler, row_idx: usize) -> Option<u
 /// a soft wrap. TUIs can lay out wraps with cursor movements, so the original logical newlines
 /// cannot always be recovered. Never clear a draft whose text is hidden behind a paste summary
 /// or scroll indicator.
+///
+/// In a slash command, text that starts past a blank cell under the cursor is the argument hint
+/// Claude Code shows after a completed command, such as `[low|medium|high]` after `/effort `.
+/// Typed text touches the cursor or sits before it. The hint, and any rows it wraps onto, are left
+/// out.
 fn native_composer_rows(
     grid: &GridHandler,
     first_row: usize,
@@ -236,6 +343,13 @@ fn native_composer_rows(
         return NativeComposer::Unreadable;
     }
     let cursor = grid.cursor_render_point();
+    let hint_starts_at_cursor =
+        command_hint_starts_at_cursor(grid, first_row, last_row, content_col);
+    let last_row = if hint_starts_at_cursor {
+        cursor.row
+    } else {
+        last_row
+    };
     let mut draft = String::new();
     for row_idx in first_row..=last_row {
         let Some(row) = grid.row(row_idx) else {
@@ -251,7 +365,13 @@ fn native_composer_rows(
         {
             return NativeComposer::Unreadable;
         }
-        let last_content_col = (content_col..row.len().min(columns))
+        // The hint starts at the cursor, so typed text ends before it.
+        let end_col = if hint_starts_at_cursor && row_idx == cursor.row {
+            cursor.col
+        } else {
+            columns
+        };
+        let last_content_col = (content_col..row.len().min(end_col))
             .rev()
             .find(|&col| !matches!(row[col].c, '\0' | ' ' | '\u{a0}'));
         let wraps = row[columns - 1].flags.contains(Flags::WRAPLINE);
@@ -296,6 +416,83 @@ fn native_composer_rows(
     }
 }
 
+/// Whether a slash command's argument hint starts at the cursor: the composer's text starts with
+/// `/`, and the cell under the cursor is blank. See [`native_composer_rows`].
+fn command_hint_starts_at_cursor(
+    grid: &GridHandler,
+    first_row: usize,
+    last_row: usize,
+    content_col: usize,
+) -> bool {
+    let cursor = grid.cursor_render_point();
+    let columns = grid.columns();
+    (first_row..=last_row).contains(&cursor.row)
+        && cursor.col > content_col
+        && cursor.col < columns
+        && grid
+            .row(first_row)
+            .is_some_and(|row| content_col < row.len() && row[content_col].c == '/')
+        && grid.row(cursor.row).is_some_and(|row| {
+            cursor.col < row.len() && matches!(row[cursor.col].c, '\0' | ' ' | '\u{a0}')
+        })
+}
+
+/// The dim text on an empty composer's prompt row, from `content_col` to the row's end.
+fn dim_row_text(grid: &GridHandler, row_idx: usize, content_col: usize) -> Option<String> {
+    let last_col = grid.columns().checked_sub(1)?;
+    if content_col > last_col {
+        return None;
+    }
+    let text = grid
+        .bounds_to_string(
+            Point::new(row_idx, content_col),
+            Point::new(row_idx, last_col),
+            false,
+            RespectObfuscatedSecrets::Yes,
+            false,
+            RespectDisplayedOutput::No,
+        )
+        .trim()
+        .replace('\u{a0}', " ");
+    (!text.is_empty()).then_some(text)
+}
+
+/// The argument hint after a completed slash command, from the cursor to the composer's end.
+fn command_hint(
+    grid: &GridHandler,
+    first_row: usize,
+    last_row: usize,
+    content_col: usize,
+) -> Option<String> {
+    if !command_hint_starts_at_cursor(grid, first_row, last_row, content_col) {
+        return None;
+    }
+    let cursor = grid.cursor_render_point();
+    let last_col = grid.columns() - 1;
+    let hint = (cursor.row..=last_row)
+        .map(|row_idx| {
+            let from = if row_idx == cursor.row {
+                cursor.col
+            } else {
+                content_col
+            };
+            grid.bounds_to_string(
+                Point::new(row_idx, from),
+                Point::new(row_idx, last_col),
+                false,
+                RespectObfuscatedSecrets::Yes,
+                false,
+                RespectDisplayedOutput::No,
+            )
+            .trim()
+            .to_owned()
+        })
+        .filter(|text| !text.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    (!hint.is_empty()).then_some(hint)
+}
+
 /// Reads Claude Code's composer between its horizontal rules, including visible multiline text.
 fn claude_native_composer_draft(grid: &GridHandler) -> Option<String> {
     claude_native_composer(grid).and_then(NativeComposer::into_draft)
@@ -303,6 +500,10 @@ fn claude_native_composer_draft(grid: &GridHandler) -> Option<String> {
 
 /// `None` when no Claude Code composer is visible.
 fn claude_native_composer(grid: &GridHandler) -> Option<NativeComposer> {
+    claude_native_composer_area(grid).map(|area| area.composer)
+}
+
+fn claude_native_composer_area(grid: &GridHandler) -> Option<NativeComposerArea> {
     let columns = grid.columns();
     if columns == 0 {
         return None;
@@ -338,18 +539,29 @@ fn claude_native_composer(grid: &GridHandler) -> Option<NativeComposer> {
                         .is_some_and(|cell| cell.flags.contains(Flags::DIM))
                 });
 
+                let rows = upper_rule..=lower_rule_idx;
                 // Claude paints an empty composer's suggestion as dim text under the cursor. It is
                 // presentation only and must never be mistaken for a draft.
                 if first_content_is_dim && cursor == Point::new(prompt_row, content_col) {
-                    return Some(NativeComposer::Empty);
+                    return Some(NativeComposerArea {
+                        rows,
+                        composer: NativeComposer::Empty,
+                        hint: None,
+                        placeholder: dim_row_text(grid, prompt_row, content_col),
+                    });
                 }
 
-                return Some(native_composer_rows(
-                    grid,
-                    prompt_row,
-                    lower_rule_idx - 1,
-                    content_col,
-                ));
+                return Some(NativeComposerArea {
+                    rows,
+                    composer: native_composer_rows(
+                        grid,
+                        prompt_row,
+                        lower_rule_idx - 1,
+                        content_col,
+                    ),
+                    hint: command_hint(grid, prompt_row, lower_rule_idx - 1, content_col),
+                    placeholder: None,
+                });
             }
         }
 
@@ -368,6 +580,10 @@ fn codex_native_composer_draft(grid: &GridHandler) -> Option<String> {
 
 /// `None` when no Codex composer is visible.
 fn codex_native_composer(grid: &GridHandler) -> Option<NativeComposer> {
+    codex_native_composer_area(grid).map(|area| area.composer)
+}
+
+fn codex_native_composer_area(grid: &GridHandler) -> Option<NativeComposerArea> {
     let columns = grid.columns();
     if columns <= 2 || !grid.is_mode_set(TermMode::SHOW_CURSOR) {
         return None;
@@ -398,34 +614,48 @@ fn codex_native_composer(grid: &GridHandler) -> Option<NativeComposer> {
             (!matches!(cell.c, '\0' | ' ' | '\u{a0}')).then_some(cell)
         })
         .is_some_and(|cell| cell.flags.contains(Flags::DIM));
-    if first_content_is_dim && cursor == Point::new(prompt_row, 2) {
-        return Some(NativeComposer::Empty);
-    }
 
     let background = row[0].bg;
     let band_end = (prompt_row + 1..past_last_visible_row)
         .find(|&row_idx| grid.row(row_idx).is_some_and(|row| row[0].bg != background));
-    let last_row = if let Some(band_end) = band_end {
+    // Both inset rows must belong to the same background band. The bottom inset must follow the
+    // cursor, otherwise the input is clipped or a transient overlay is showing. A band reaching
+    // the viewport's top may hide scrolled text without scroll arrows. Extra rows above the top
+    // inset can contain attachments which a text copy would lose.
+    let band_is_composer = |band_end: usize| {
         let band_start = (first_visible_row..prompt_row)
             .rev()
             .find(|&row_idx| grid.row(row_idx).is_some_and(|row| row[0].bg != background))
             .map_or(first_visible_row, |row_idx| row_idx + 1);
-        // Both inset rows must belong to the same background band. The bottom inset must
-        // follow the cursor, otherwise the input is clipped or a transient overlay is showing.
-        // A band reaching the viewport's top may hide scrolled text without scroll arrows.
-        // Extra rows above the top inset can contain attachments which a text copy would lose.
-        if band_start <= first_visible_row
-            || band_start != prompt_row - 1
-            || band_end < prompt_row + 2
-            || cursor.row >= band_end - 1
-            || !grid_row_is_blank(grid, band_end - 1)
-            || !grid
+        band_start > first_visible_row
+            && band_start == prompt_row - 1
+            && band_end >= prompt_row + 2
+            && cursor.row < band_end - 1
+            && grid_row_is_blank(grid, band_end - 1)
+            && grid
                 .row(prompt_row - 1)
                 .is_some_and(|row| row[0].bg == background)
-        {
+    };
+
+    if first_content_is_dim && cursor == Point::new(prompt_row, 2) {
+        let rows = match band_end {
+            Some(band_end) if band_is_composer(band_end) => prompt_row - 1..=band_end - 1,
+            _ => prompt_row..=prompt_row,
+        };
+        return Some(NativeComposerArea {
+            rows,
+            composer: NativeComposer::Empty,
+            hint: None,
+            // Codex's dim placeholder is only an example, never a prediction to accept.
+            placeholder: None,
+        });
+    }
+
+    let (rows, last_row) = if let Some(band_end) = band_end {
+        if !band_is_composer(band_end) {
             return None;
         }
-        band_end - 2
+        (prompt_row - 1..=band_end - 1, band_end - 2)
     } else {
         if cursor.row != prompt_row
             || prompt_row + 2 >= past_last_visible_row
@@ -439,12 +669,17 @@ fn codex_native_composer(grid: &GridHandler) -> Option<NativeComposer> {
         {
             return None;
         }
-        prompt_row
+        (prompt_row..=prompt_row, prompt_row)
     };
-    Some(native_composer_rows(grid, prompt_row, last_row, 2))
+    Some(NativeComposerArea {
+        rows,
+        composer: native_composer_rows(grid, prompt_row, last_row, 2),
+        hint: command_hint(grid, prompt_row, last_row, 2),
+        placeholder: None,
+    })
 }
 
-fn mode_correct_control_key_bytes(
+pub(super) fn mode_correct_control_key_bytes(
     model: &TerminalModel,
     keystroke: &str,
     key_without_modifiers: &str,
@@ -856,6 +1091,9 @@ impl TerminalView {
             UseAgentToolbarEvent::HideRichInput => {
                 self.close_cli_agent_rich_input_and_disable_auto_toggle(ctx);
             }
+            UseAgentToolbarEvent::AgentPickerClosed => {
+                self.redetermine_terminal_focus(ctx);
+            }
             UseAgentToolbarEvent::Warpify => {
                 self.hide_use_agent_footer_in_blocklist(ctx);
                 self.handle_action(&TerminalAction::TriggerSubshellBootstrap, ctx);
@@ -1238,6 +1476,7 @@ impl TerminalView {
         if !self.has_active_cli_agent_input_session(ctx) {
             return;
         }
+        self.withdraw_one_box_command(ctx);
 
         // Save the current buffer text as a draft before closing, so it can
         // be restored if the user reopens the composer.
@@ -1279,12 +1518,11 @@ impl TerminalView {
             *ai_settings.auto_dismiss_rich_input_after_submit
         };
 
+        // The buffer itself is not cleared here: a rich input submission already cleared it, and
+        // every other send (Remote Control, footer prompts, auto-continue, the coordinator) must
+        // keep what the user is typing.
         if should_close {
             self.close_cli_agent_rich_input(CLIAgentRichInputCloseReason::Submit, ctx);
-        } else {
-            self.input.update(ctx, |input, ctx| {
-                input.clear_buffer_and_reset_undo_stack(ctx);
-            });
         }
     }
 
@@ -1489,12 +1727,7 @@ impl TerminalView {
         if session.received_rich_notification {
             return true;
         }
-        let grid = cli_agent_native_grid(&model);
-        match session.agent {
-            CLIAgent::Claude => claude_native_composer(grid).is_some(),
-            CLIAgent::Codex => codex_native_composer(grid).is_some(),
-            _ => false,
-        }
+        native_composer_area(cli_agent_native_grid(&model), session.agent).is_some()
     }
 
     /// Whether a restart right now would cut this pane's agent off mid-turn: working, or waiting on
@@ -1535,12 +1768,7 @@ impl TerminalView {
 
     fn native_composer(&self, agent: CLIAgent) -> Option<NativeComposer> {
         let model = self.model.lock();
-        let grid = cli_agent_native_grid(&model);
-        match agent {
-            CLIAgent::Claude => claude_native_composer(grid),
-            CLIAgent::Codex => codex_native_composer(grid),
-            _ => None,
-        }
+        native_composer_area(cli_agent_native_grid(&model), agent).map(|area| area.composer)
     }
 
     /// The session's state as its title and screen show it. Used until a hook reports one.
@@ -1585,6 +1813,29 @@ impl TerminalView {
         &self,
         ctx: &AppContext,
     ) -> (String, Option<&'static str>) {
+        self.agent_readiness(false, ctx)
+    }
+
+    /// Readiness for a message from `origin`. Clinch's own first message to a Coordinator that
+    /// has had no conversation can't wait for the agent to name one, because Codex names its
+    /// conversation only when that first prompt arrives. It goes once the agent's empty composer
+    /// is on screen instead, with every other check unchanged.
+    pub(crate) fn agent_send_readiness(
+        &self,
+        origin: AgentSendOrigin,
+        ctx: &AppContext,
+    ) -> (String, Option<&'static str>) {
+        let first_message = origin == AgentSendOrigin::Clinch
+            && self.coordinator_has_no_conversation(ctx)
+            && self.agent_composer_is_empty(ctx);
+        self.agent_readiness(first_message, ctx)
+    }
+
+    fn agent_readiness(
+        &self,
+        first_message: bool,
+        ctx: &AppContext,
+    ) -> (String, Option<&'static str>) {
         use std::hash::{Hash, Hasher};
 
         use crate::terminal::cli_agent_sessions::CLIAgentSessionStatus;
@@ -1622,9 +1873,9 @@ impl TerminalView {
             Some("unsupported_provider")
         } else if session.is_remote() {
             Some("remote_session")
-        } else if session.session_key().is_none() {
+        } else if session.session_key().is_none() && !first_message {
             Some("unknown_conversation")
-        } else if observed == Some(ObservedAgentState::Unknown) {
+        } else if observed == Some(ObservedAgentState::Unknown) && !first_message {
             Some("status_unavailable")
         } else if self.coordination_send_pending {
             Some("submission_pending")
@@ -1688,18 +1939,22 @@ impl TerminalView {
         true
     }
 
-    /// Direct CLI send with a second identity/input check before provider-specific Enter.
+    /// Types `text` into the agent and submits it, with a second identity/input check before the
+    /// provider-specific Enter. A send from the local control CLI also needs local control on, both
+    /// before typing, so text that would never be submitted stays out of the composer, and again
+    /// before Enter.
     #[cfg(feature = "local_tty")]
     pub(crate) fn local_control_send_agent_text(
         &mut self,
         text: String,
         expected_revision: &str,
+        origin: AgentSendOrigin,
         completion: impl FnOnce(bool) + Send + 'static,
         ctx: &mut ViewContext<Self>,
     ) -> bool {
-        let (revision, unavailable) = self.local_control_agent_readiness(ctx);
+        let (revision, unavailable) = self.agent_send_readiness(origin, ctx);
         let mut completion = LocalAgentDeliveryCompletion(Some(Box::new(completion)));
-        if revision != expected_revision || unavailable.is_some() {
+        if revision != expected_revision || unavailable.is_some() || !origin.allowed(ctx) {
             return false;
         }
         let session = CLIAgentSessionsModel::as_ref(ctx)
@@ -1713,6 +1968,7 @@ impl TerminalView {
         let starts_turn = submission_starts_agent_turn(&text_bytes);
         let strategy = rich_input_submit_strategy(agent, &text_bytes);
         self.coordination_send_pending = true;
+        self.start_one_box_send_grace(ctx);
         // write_to_pty avoids marking our own insertion as intervening human input.
         self.write_to_pty(strategy.composer_bytes(text_bytes), ctx);
         ctx.spawn(Timer::after(strategy.enter_delay()), move |me, _, ctx| {
@@ -1738,7 +1994,7 @@ impl TerminalView {
             let rich_input_empty = !me.has_active_cli_agent_input_session(ctx)
                 || me.input.as_ref(ctx).buffer_text(ctx).is_empty();
             let valid = me.coordination_input_epoch == input_epoch
-                && crate::settings::LocalControlSettings::as_ref(ctx).is_enabled()
+                && origin.allowed(ctx)
                 && !crate::remote_control::has_writer_for_terminal(me.view_id, ctx)
                 && same_ready_session
                 && same_foreground
@@ -1767,6 +2023,7 @@ impl TerminalView {
         &mut self,
         _text: String,
         _expected_revision: &str,
+        _origin: AgentSendOrigin,
         _completion: impl FnOnce(bool) + Send + 'static,
         _ctx: &mut ViewContext<Self>,
     ) -> bool {
@@ -2090,6 +2347,7 @@ impl TerminalView {
         is_desktop_input: bool,
         ctx: &mut ViewContext<Self>,
     ) {
+        self.start_one_box_send_grace(ctx);
         // This pipeline is only reached with a known, non-empty agent prompt. Mark it directly
         // instead of inferring activity from arbitrary carriage returns written to the raw TUI;
         // those can also confirm startup menus or be sent while the agent is idle.
@@ -2439,6 +2697,9 @@ impl UseAgentToolbar {
             AgentInputFooterEvent::HideRichInput => {
                 ctx.emit(UseAgentToolbarEvent::HideRichInput);
             }
+            AgentInputFooterEvent::AgentPickerClosed => {
+                ctx.emit(UseAgentToolbarEvent::AgentPickerClosed);
+            }
             AgentInputFooterEvent::OpenQuickInsertModal => {
                 ctx.emit(UseAgentToolbarEvent::OpenQuickInsertModal);
             }
@@ -2561,6 +2822,8 @@ pub enum UseAgentToolbarEvent {
     OpenRichInput,
     /// Hide the rich input editor (same as Escape).
     HideRichInput,
+    /// A Coordinator's agent picker closed, so focus goes back to the terminal or its box.
+    AgentPickerClosed,
     /// User chose to warpify the subshell.
     Warpify,
     /// User chose to use the agent.
@@ -2781,6 +3044,29 @@ impl ActionButtonTheme for AgentFooterButtonTheme {
             );
         }
         color
+    }
+}
+
+/// Who is typing into an agent through [`TerminalView::local_control_send_agent_text`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum AgentSendOrigin {
+    /// The local control CLI, which works only while the user has local control on.
+    LocalControl,
+    /// Clinch itself, such as the continue after a restart or auto-coordinate, which does not
+    /// depend on the user's local control setting.
+    Clinch,
+}
+
+impl AgentSendOrigin {
+    fn allowed(self, app: &AppContext) -> bool {
+        match self {
+            AgentSendOrigin::Clinch => true,
+            // Builds without the control CLI never register its settings.
+            AgentSendOrigin::LocalControl => {
+                app.has_singleton_model::<crate::settings::LocalControlSettings>()
+                    && crate::settings::LocalControlSettings::as_ref(app).is_enabled()
+            }
+        }
     }
 }
 

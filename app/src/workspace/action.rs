@@ -257,8 +257,13 @@ pub enum WorkspaceAction {
     PinTab(usize),
     /// Unpins the tab at the given index.
     UnpinTab(usize),
-    /// Restarts the coordinator tab at the given index with the given agent.
-    SwitchCoordinatorAgent(usize, crate::agent_resume::AgentResumeProvider),
+    /// Restarts this project's coordinator with `provider`, unless it runs it already, and
+    /// remembers it for new coordinators. Its agent pickers and tab menu send this; the start
+    /// screen carries over what was typed there as `draft`.
+    SetCoordinatorAgent {
+        provider: crate::agent_resume::AgentResumeProvider,
+        draft: Option<String>,
+    },
     /// Opens a coordinator session for this project and turns the default back on.
     OpenCoordinatorSession,
     /// Turns this project's auto-coordinate on or off.
@@ -1023,7 +1028,7 @@ impl WorkspaceAction {
             | CloseTabsBelowGroup(_)
             | PinTab(_)
             | UnpinTab(_)
-            | SwitchCoordinatorAgent(..)
+            | SetCoordinatorAgent { .. }
             | OpenCoordinatorSession
             | SetAutoCoordinate(_)
             | SetCoordinatorOn(_)

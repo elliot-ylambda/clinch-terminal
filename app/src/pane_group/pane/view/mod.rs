@@ -16,7 +16,7 @@ use warpui::keymap::EditableBinding;
 use warpui::presenter::ChildView;
 use warpui::{
     AppContext, Element, Entity, EntityId, ModelHandle, SingletonEntity, TypedActionView, View,
-    ViewContext, ViewHandle,
+    ViewContext, ViewHandle, WindowId,
 };
 
 use super::{
@@ -79,6 +79,8 @@ pub struct PaneView<P: BackingView> {
     header: ViewHandle<PaneHeader<P>>,
     is_being_dragged: bool,
     focus_handle: Option<PaneFocusHandle>,
+    /// The window this pane is drawn in, which decides its card's background opacity.
+    window_id: WindowId,
 }
 
 impl<P: BackingView> PaneView<P> {
@@ -124,6 +126,7 @@ impl<P: BackingView> PaneView<P> {
             header,
             is_being_dragged: false,
             focus_handle: None,
+            window_id: ctx.window_id(),
         }
     }
 
@@ -358,14 +361,19 @@ pub struct PaneDropTargetData {
 /// Space between the terminal card's rounded edge and its content.
 const CARD_CONTENT_PADDING: f32 = 10.;
 
-fn active_window_card_fill(app: &AppContext) -> Option<warpui::elements::Fill> {
-    let window_id = app.windows().active_window()?;
-    crate::workspace::util::get_terminal_card_fill(window_id, app)
-}
-
 impl<P: BackingView> View for PaneView<P> {
     fn ui_name() -> &'static str {
         "PaneView"
+    }
+
+    fn on_window_transferred(
+        &mut self,
+        _source_window_id: WindowId,
+        target_window_id: WindowId,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        self.window_id = target_window_id;
+        ctx.notify();
     }
 
     fn render(&self, app: &AppContext) -> Box<dyn Element> {
@@ -408,7 +416,9 @@ impl<P: BackingView> View for PaneView<P> {
             .with_padding_left(CARD_CONTENT_PADDING)
             .with_padding_right(CARD_CONTENT_PADDING / 2.)
             .with_padding_top(CARD_CONTENT_PADDING / 2.);
-        if let Some(fill) = active_window_card_fill(app) {
+        // The pane's own window, not the active one: while another app is in front there is no
+        // active window, and a redraw then would leave the card unpainted and show the frame.
+        if let Some(fill) = crate::workspace::util::get_terminal_card_fill(self.window_id, app) {
             container = container.with_background(fill);
         }
         if pane_configuration.show_accent_border {

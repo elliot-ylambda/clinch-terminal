@@ -1138,6 +1138,48 @@ fn native_composer_drafts_preserve_visible_paragraphs_and_reject_hidden_text() {
                 claude_native_composer_draft(model.alt_screen().grid_handler()).as_deref(),
                 Some("first paragraph\n\n  second café")
             );
+            // A completed slash command's argument hint starts past a blank cell under the cursor,
+            // in gray, and may wrap onto the next row. Neither is part of the draft. This is the
+            // row Claude Code 2.1.319 draws after Tab completes `/eff`.
+            model.process_bytes(
+                format!(
+                    "\x1b[0m\x1b[2J\x1b[3;1H{rule}\x1b[4;1H❯\u{a0}\x1b[38;2;177;185;249m/effort\x1b[4;12H\x1b[38;2;153;153;153m[low|medium|high]\x1b[5;3H[auto]\x1b[0m\x1b[6;1H{rule}\x1b[4;11H"
+                )
+                .as_str(),
+            );
+            assert_eq!(
+                claude_native_composer_draft(model.alt_screen().grid_handler()).as_deref(),
+                Some("/effort ")
+            );
+            let area = native_composer_area(model.alt_screen().grid_handler(), CLIAgent::Claude)
+                .expect("Claude's composer is visible");
+            assert_eq!(area.hint(), Some("[low|medium|high] [auto]"));
+            // Arguments typed after the command touch the cursor, and count.
+            model.process_bytes(
+                format!(
+                    "\x1b[0m\x1b[2J\x1b[3;1H{rule}\x1b[4;1H❯ /effort high\x1b[5;1H{rule}\x1b[4;12H"
+                )
+                .as_str(),
+            );
+            assert_eq!(
+                claude_native_composer_draft(model.alt_screen().grid_handler()).as_deref(),
+                Some("/effort high")
+            );
+            let area = native_composer_area(model.alt_screen().grid_handler(), CLIAgent::Claude)
+                .expect("Claude's composer is visible");
+            assert_eq!(area.hint(), None);
+            // Outside a slash command, text past a gap at the cursor is still the user's.
+            model.process_bytes(
+                format!(
+                    "\x1b[0m\x1b[2J\x1b[3;1H{rule}\x1b[4;1H❯ fix it  then test\x1b[5;1H{rule}\x1b[4;10H"
+                )
+                .as_str(),
+            );
+            assert_eq!(
+                claude_native_composer_draft(model.alt_screen().grid_handler()).as_deref(),
+                Some("fix it  then test")
+            );
+            model.process_bytes(claude_frame.as_str());
             model.process_bytes("\x1b[4;3H[Pasted text #1 +12 lines]\x1b[4;5H");
             assert!(claude_native_composer_draft(model.alt_screen().grid_handler()).is_none());
             assert_eq!(
@@ -1246,6 +1288,130 @@ fn native_composer_proves_restore_ready_without_rich_hooks_or_a_draft() {
                 }
                 assert!(view.agent_restore_is_ready(ctx), "an empty native composer proves successful restore");
             }
+        });
+    });
+}
+
+#[test]
+fn native_composer_area_spans_the_whole_composer_box() {
+    use crate::terminal::{SizeInfo, SizeUpdate, SizeUpdateReason};
+
+    App::test((), |mut app| async move {
+        initialize_app_for_terminal_view(&mut app);
+        let terminal = add_window_with_terminal(&mut app, None);
+        terminal.update(&mut app, |view, _| {
+            let mut model = view.model.lock();
+            let last_size = *model.block_list().size();
+            let new_size = SizeInfo::new_without_font_metrics(24, 120);
+            model.resize(SizeUpdate {
+                update_reason: SizeUpdateReason::Refresh,
+                last_size,
+                new_size,
+                new_gap_height: None,
+                natural_rows: new_size.rows(),
+                natural_cols: new_size.columns(),
+            });
+            model.enter_alt_screen(true);
+            let rule = "─".repeat(120);
+
+            // Claude Code: both rules and the prompt row between them. The rows below the lower
+            // rule (status line, mode row) are not part of the box.
+            model.process_bytes(
+                format!(
+                    "\x1b[0m\x1b[2J\x1b[3;1H{rule}\x1b[4;1H❯ \x1b[2mTry a prompt\x1b[0m\x1b[5;1H{rule}\x1b[6;1H⏵⏵ bypass permissions on · 2 local agents\x1b[4;3H"
+                )
+                .as_str(),
+            );
+            let area = native_composer_area(model.alt_screen().grid_handler(), CLIAgent::Claude)
+                .expect("Claude's composer is visible");
+            assert_eq!(area.rows, 2..=4);
+            assert!(area.is_empty());
+
+            // Claude's fixed examples are placeholders, not predictions to accept.
+            model.process_bytes(
+                format!(
+                    "\x1b[0m\x1b[2J\x1b[3;1H{rule}\x1b[4;1H❯\u{a0}\x1b[2mTry \"fix typecheck errors\"\x1b[22m\x1b[5;1H{rule}\x1b[4;3H"
+                )
+                .as_str(),
+            );
+            let area = native_composer_area(model.alt_screen().grid_handler(), CLIAgent::Claude)
+                .expect("Claude's composer is visible");
+            assert!(area.is_empty());
+            assert_eq!(area.suggestion(), None);
+
+            // A predicted next prompt is drawn the same dim way, and is offered to the box.
+            model.process_bytes(
+                format!(
+                    "\x1b[0m\x1b[2J\x1b[3;1H{rule}\x1b[4;1H❯\u{a0}\x1b[2mrun the failing tests again\x1b[22m\x1b[5;1H{rule}\x1b[4;3H"
+                )
+                .as_str(),
+            );
+            let area = native_composer_area(model.alt_screen().grid_handler(), CLIAgent::Claude)
+                .expect("Claude's composer is visible");
+            assert!(area.is_empty());
+            assert_eq!(area.suggestion(), Some("run the failing tests again"));
+
+            // A draft keeps the same box but is not empty, so one-box mode leaves it showing.
+            model.process_bytes(
+                format!("\x1b[0m\x1b[2J\x1b[3;1H{rule}\x1b[4;1H❯ half a thought\x1b[5;1H{rule}\x1b[4;18H")
+                    .as_str(),
+            );
+            let area = native_composer_area(model.alt_screen().grid_handler(), CLIAgent::Claude)
+                .expect("Claude's composer is visible");
+            assert_eq!(area.rows, 2..=4);
+            assert!(!area.is_empty());
+            assert_eq!(area.suggestion(), None, "typed text is never a suggestion");
+
+            // A named session shows its name in the upper rule, cut short when the pane is narrow.
+            for named in [
+                format!("{} one-box-edges ─", "─".repeat(104)),
+                format!(" {}… ─", "x".repeat(116)),
+            ] {
+                model.process_bytes(
+                    format!("\x1b[0m\x1b[2J\x1b[3;1H{named}\x1b[4;1H❯ \x1b[2mTry a prompt\x1b[0m\x1b[5;1H{rule}\x1b[4;3H")
+                        .as_str(),
+                );
+                let area =
+                    native_composer_area(model.alt_screen().grid_handler(), CLIAgent::Claude)
+                        .expect("a named session's composer is visible");
+                assert_eq!(area.rows, 2..=4, "{named:?}");
+                assert!(area.is_empty());
+            }
+
+            // A label touching the rule is not a label, nor are two, nor text that stops short of
+            // the pane's edge, nor a heading followed by a long rule.
+            for upper in [
+                format!("{}one-box-edges─", "─".repeat(105)),
+                format!("{} one ─ two ─", "─".repeat(108)),
+                format!("──── Summary {}", " ".repeat(100)),
+                format!(" note {}", "─".repeat(110)),
+                format!(" note {}", "─".repeat(114)),
+            ] {
+                model.process_bytes(
+                    format!("\x1b[0m\x1b[2J\x1b[3;1H{upper}\x1b[4;1H❯ \x1b[2mTry a prompt\x1b[0m\x1b[5;1H{rule}\x1b[4;3H")
+                        .as_str(),
+                );
+                assert!(
+                    native_composer_area(model.alt_screen().grid_handler(), CLIAgent::Claude)
+                        .is_none(),
+                    "{upper:?} is not a composer rule"
+                );
+            }
+
+            // Codex: its shaded band, both blank inset rows included, but not the footer below.
+            model.process_bytes(
+                "\x1b[0m\x1b[2J\x1b[?25h\x1b[48;2;30;30;30m\x1b[3;1H\x1b[2K\x1b[4;1H\x1b[2K\x1b[5;1H\x1b[2K\x1b[4;1H\x1b[1m›\x1b[22m \x1b[2mAsk Codex\x1b[0m\x1b[6;3Hgpt-5.6-sol max · Ready\x1b[4;3H",
+            );
+            let area = native_composer_area(model.alt_screen().grid_handler(), CLIAgent::Codex)
+                .expect("Codex's composer is visible");
+            assert_eq!(area.rows, 2..=4);
+            assert!(area.is_empty());
+
+            // Agents Clinch cannot read never get their composer replaced.
+            assert!(
+                native_composer_area(model.alt_screen().grid_handler(), CLIAgent::OpenCode)
+                    .is_none()
+            );
         });
     });
 }

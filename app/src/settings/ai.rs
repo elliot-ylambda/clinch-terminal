@@ -1353,6 +1353,21 @@ define_settings_group!(AISettings, settings: [
         description: "Whether CLI agent Rich Input automatically closes and reopens based on the agent's blocked state.",
     }
 
+    // When enabled, Claude Code and Codex use Clinch's input box in place of their own: it opens
+    // when the agent starts and covers the agent's empty composer, while the agent's status line,
+    // mode row and subagent counts stay visible. Pickers, permission prompts and dialogs show
+    // through unchanged.
+    one_box_agent_input: OneBoxAgentInput {
+        type: bool,
+        // Off for now: Claude Code and Codex keep their own composers.
+        default: false,
+        supported_platforms: SupportedPlatforms::ALL,
+        sync_to_cloud: SyncToCloud::Globally(RespectUserSyncSetting::Yes),
+        private: false,
+        toml_path: "agents.third_party.one_box_input",
+        description: "Whether Claude Code and Codex use Clinch's input box in place of their own.",
+    }
+
     // When enabled and a CLI agent session has a plugin listener, rich input
     // auto-opens once when the session starts or when the listener is registered.
     auto_open_rich_input_on_cli_agent_start: AutoOpenRichInputOnCLIAgentStart {

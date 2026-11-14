@@ -22,8 +22,8 @@ use warpui::{AddSingletonModel, App, ViewHandle};
 use watcher::HomeDirectoryWatcher;
 
 use super::coordinator::{
-    coordinator_directory, coordinator_launch_command, coordinator_restore_command,
-    coordinator_switch_targets, CoordinatorBootstrap,
+    coordinator_agents, coordinator_directory, coordinator_launch_command,
+    coordinator_restore_command, coordinator_switch_targets, CoordinatorBootstrap,
 };
 use super::*;
 use crate::agent_resume::AgentResumeProvider;
@@ -611,6 +611,8 @@ pub(crate) fn initialize_app(app: &mut App) {
     app.add_singleton_model(crate::ai::blocklist::QueuedQueryModel::new);
     app.add_singleton_model(|ctx| OrchestrationPillBarModel::new(Default::default(), ctx));
     app.add_singleton_model(|_| CLIAgentSessionsModel::new());
+    #[cfg(feature = "local_fs")]
+    app.add_singleton_model(|_| crate::managed_worktrees::ManagedWorktreesModel::new_for_test());
     app.add_singleton_model(crate::terminal::cli_agent_sessions::restore::AgentRestoreQueue::new);
     // AutoContinueModel observes fresh usage snapshots as well as session
     // events, so both dependencies must be registered first. The test
@@ -5126,7 +5128,18 @@ fn test_automatic_worktree_routing_recovers_a_local_scratchpad_tab() {
             let original_tab_count = workspace.tab_count();
             assert!(workspace.try_add_automatic_worktree_tab(DefaultSessionMode::Terminal, ctx));
             assert_eq!(workspace.tab_count(), original_tab_count + 1);
-            assert_eq!(workspace.reserved_automatic_worktree_branches.len(), 1);
+            // The worktree is made in the background while the new tab shows its terminal, the
+            // default side of its toggle.
+            let new_terminal = workspace
+                .active_tab_pane_group()
+                .as_ref(ctx)
+                .active_session_view(ctx)
+                .expect("the new tab has a terminal");
+            assert_eq!(
+                new_terminal.as_ref(ctx).new_tab_view(),
+                Some(crate::terminal::view::NewTabView::Terminal)
+            );
+            assert!(!new_terminal.as_ref(ctx).new_tab_start_screen_shows());
             let startup_path = workspace
                 .active_tab_pane_group()
                 .as_ref(ctx)
@@ -5137,7 +5150,7 @@ fn test_automatic_worktree_routing_recovers_a_local_scratchpad_tab() {
                         .active_session_id(ctx),
                     ctx,
                 )
-                .expect("new worktree command starts in the primary repository");
+                .expect("the new tab starts in the primary checkout until its worktree is ready");
             assert_eq!(dunce::canonicalize(startup_path).unwrap(), expected_primary);
         });
     });
@@ -7263,18 +7276,17 @@ fn a_devin_coordinator_carries_its_role_in_one_word_so_restore_can_read_it() {
 
 #[test]
 fn a_coordinator_offers_every_other_agent_and_devin_only_where_installed() {
-    let providers = |current, devin_installed| {
-        coordinator_switch_targets(current, devin_installed)
-            .into_iter()
-            .map(|(_, provider)| provider)
-            .collect::<Vec<_>>()
-    };
     use AgentResumeProvider::{Claude, Codex, Devin};
-    assert_eq!(providers(Claude, false), [Codex]);
-    assert_eq!(providers(Claude, true), [Codex, Devin]);
-    assert_eq!(providers(Codex, true), [Claude, Devin]);
-    assert_eq!(providers(Devin, true), [Claude, Codex]);
-    assert_eq!(providers(Devin, false), [Claude, Codex]);
+    assert_eq!(coordinator_switch_targets(Claude, false), [Codex]);
+    assert_eq!(coordinator_switch_targets(Claude, true), [Codex, Devin]);
+    assert_eq!(coordinator_switch_targets(Codex, true), [Claude, Devin]);
+    assert_eq!(coordinator_switch_targets(Devin, true), [Claude, Codex]);
+    assert_eq!(coordinator_switch_targets(Devin, false), [Claude, Codex]);
+
+    // The pickers list the current agent too, even a Devin no longer installed.
+    assert_eq!(coordinator_agents(Claude, false), [Claude, Codex]);
+    assert_eq!(coordinator_agents(Codex, true), [Claude, Codex, Devin]);
+    assert_eq!(coordinator_agents(Devin, false), [Claude, Codex, Devin]);
 }
 
 #[test]
@@ -7425,8 +7437,41 @@ fn switching_the_coordinator_agent_keeps_it_first_and_remembers_the_choice() {
             workspace.tabs[0].pane_group.id()
         });
         workspace.update(&mut app, |workspace, ctx| {
+            // Picking the agent it already runs changes nothing.
             workspace.handle_action(
-                &WorkspaceAction::SwitchCoordinatorAgent(0, AgentResumeProvider::Codex),
+                &WorkspaceAction::SetCoordinatorAgent {
+                    provider: AgentResumeProvider::Claude,
+                    draft: None,
+                },
+                ctx,
+            );
+            assert_eq!(workspace.tabs[0].pane_group.id(), original);
+
+            // The tab menu offers the other agents (Devin too where it's installed), then turning
+            // the coordinator off.
+            let labels = workspace
+                .coordinator_menu_items(0, ctx)
+                .iter()
+                .filter_map(|item| match item {
+                    MenuItem::Item(fields) => Some(fields.label().to_owned()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                labels.first().map(String::as_str),
+                Some("Switch coordinator to Codex")
+            );
+            assert_eq!(
+                labels.last().map(String::as_str),
+                Some("Turn coordinator off")
+            );
+            assert!(!labels.iter().any(|label| label.contains("Claude")));
+
+            workspace.handle_action(
+                &WorkspaceAction::SetCoordinatorAgent {
+                    provider: AgentResumeProvider::Codex,
+                    draft: None,
+                },
                 ctx,
             );
             assert_eq!(workspace.tabs.len(), 2);

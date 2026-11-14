@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use rand::prelude::StdRng;
 use rand::SeedableRng;
 
-use super::{generate_unique_name, WORDS};
+use super::{generate_unique_name, is_generated_worktree_name, WORDS};
 
 fn seeded_rng(seed: u64) -> StdRng {
     StdRng::seed_from_u64(seed)
@@ -164,5 +164,35 @@ fn word_list_has_no_duplicates() {
     let mut seen = HashSet::new();
     for word in WORDS {
         assert!(seen.insert(word), "duplicate word in WORDS: {word}");
+    }
+}
+
+#[test]
+fn generated_names_are_recognized_and_others_are_not() {
+    let existing = HashSet::new();
+    for seed in 0..200 {
+        let name = generate_unique_name(&existing, &mut seeded_rng(seed));
+        assert!(is_generated_worktree_name(&name), "{name}");
+    }
+    let taken: HashSet<&str> = WORDS.iter().copied().collect();
+    let mut rng = seeded_rng(7);
+    // Escalates to longer names once two-word ones collide.
+    let mut longer = HashSet::new();
+    for _ in 0..50 {
+        longer.insert(generate_unique_name(&taken, &mut rng));
+    }
+    assert!(longer.iter().all(|name| is_generated_worktree_name(name)));
+    assert!(is_generated_worktree_name("worktree-42"));
+    for name in [
+        "main",
+        "one-box-rich-input",
+        "worktree-",
+        "worktree-4a",
+        WORDS[0],
+        &format!("{}-{}-x", WORDS[0], WORDS[1]),
+        &format!("{}--{}", WORDS[0], WORDS[1]),
+        &format!("{}-{}", WORDS[0], WORDS[1]).to_uppercase(),
+    ] {
+        assert!(!is_generated_worktree_name(name), "{name}");
     }
 }

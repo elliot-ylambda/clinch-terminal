@@ -1,11 +1,19 @@
 //! Auto-coordinate: the project coordinator acting on its own.
 //!
-//! When a session in the project finishes a turn or starts waiting on the user, Clinch wakes the
+//! Clinch runs the coordinator's loop. When a session in the project finishes a turn or starts
+//! waiting on the user, and every so often while sessions are working, Clinch wakes the
 //! coordinator with a one-line update so it can run the tactics the user switched on (naming new
 //! sessions, spotting conflicts, lining up merges and releases, offering to clean up). Updates are
-//! batched and spaced out, because each wakeup spends a turn of the user's own Claude or Codex
-//! plan. A wakeup is typed only when the coordinator is idle and its composer is empty; anything
+//! batched and spaced out, because each wakeup spends a turn of the user's own Claude, Codex or
+//! Devin plan. A wakeup is typed only when the coordinator is idle and its composer is empty; anything
 //! else, including the user typing, holds it for a later retry rather than interrupting.
+//!
+//! The loop starts with the user: a new coordinator's start screen offers a first message that
+//! starts it, and nothing is sent on its own before the user sends something. Without the start
+//! screen, a coordinator with no conversation yet gets that first message itself when
+//! auto-coordinate wakes it, rather than an update it has no context for. Switching
+//! auto-coordinate off pauses rather than closes: the coordinator is told to pause every loop it
+//! runs and to stop acting on its own, and switching back on tells it to pick up again.
 //!
 //! The coordinator's instructions for these wakeups live in the managed `clinch-coordinate` skill,
 //! so improving them never requires restarting a coordinator.
@@ -29,7 +37,7 @@ use warpui::platform::Cursor;
 use warpui::r#async::Timer;
 use warpui::ui_components::components::UiComponent;
 use warpui::ui_components::switch::SwitchStateHandle;
-use warpui::{AppContext, Element, EntityId, SingletonEntity, ViewContext};
+use warpui::{AppContext, Element, EntityId, SingletonEntity, ViewContext, ViewHandle};
 
 use super::vertical_tabs::SidebarPopover;
 use super::Workspace;
@@ -39,6 +47,8 @@ use crate::settings::ClinchSettings;
 use crate::terminal::cli_agent_sessions::{
     CLIAgentSessionStatus, CLIAgentSessionsModel, CLIAgentSessionsModelEvent,
 };
+use crate::terminal::view::use_agent_footer::AgentSendOrigin;
+use crate::terminal::view::TerminalView;
 use crate::workspace::action::WorkspaceAction;
 
 /// Updates that arrive close together go out as one wakeup.
@@ -47,6 +57,12 @@ const BATCH_WINDOW: Duration = Duration::from_secs(5);
 const MIN_WAKE_INTERVAL: Duration = Duration::from_secs(120);
 /// How soon a wakeup that is due but held (coordinator busy, user typing) is tried again.
 const RETRY_INTERVAL: Duration = Duration::from_secs(10);
+/// How often a new coordinator is checked until its first message goes out, so that message goes
+/// soon after its agent is up.
+const FIRST_MESSAGE_RETRY_INTERVAL: Duration = Duration::from_secs(2);
+/// How long the loop lets the coordinator sit without a wakeup while sessions are working before
+/// it checks in anyway.
+const LOOP_INTERVAL: Duration = Duration::from_secs(10 * 60);
 /// Session titles are quoted in the wakeup; long ones are cut.
 const MAX_TITLE_CHARS: usize = 60;
 
@@ -240,6 +256,14 @@ impl WakePlanner {
         self.last_wake_at = Some(now);
     }
 
+    /// How long until the loop's next routine check: a full [`LOOP_INTERVAL`] after the last
+    /// wakeup, so a coordinator that heard from Clinch recently is left alone.
+    pub(crate) fn routine_check_in(&self, now: Instant) -> Duration {
+        self.last_wake_at.map_or(Duration::ZERO, |last| {
+            (last + LOOP_INTERVAL).saturating_duration_since(now)
+        })
+    }
+
     pub(crate) fn has_pending(&self) -> bool {
         !self.pending.is_empty()
     }
@@ -267,16 +291,46 @@ fn quoted_title(title: &str) -> String {
     format!("\"{short}\"")
 }
 
-/// The one-line message typed into the coordinator. It names what changed and which tactics are
-/// on; the skill says what to do with it.
+/// Why the coordinator runs other than for sessions that changed. When two are outstanding at
+/// once the later variant wins, since its message covers the earlier one's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum RunKind {
+    /// The loop's regular check while sessions are working.
+    RoutineCheck,
+    /// The user pressed Run now.
+    Requested,
+    /// The user switched auto-coordinate on for a coordinator already in conversation.
+    Resumed,
+}
+
+/// The one-line message typed into the coordinator. It names what changed, why it runs, and which
+/// tactics are on; the skill says what to do with it. `working` names the sessions still working,
+/// for a routine check.
 pub(crate) fn wakeup_text(
     updates: &[SessionUpdate],
     tactics: &[Tactic],
-    requested: bool,
+    run: Option<RunKind>,
+    working: &[String],
 ) -> String {
     let mut text = String::from(AUTO_COORDINATE_MARKER);
-    if requested {
-        text.push_str(" Run requested.");
+    match run {
+        None => {}
+        Some(RunKind::Requested) => text.push_str(" Run requested."),
+        Some(RunKind::Resumed) => text.push_str(
+            " Auto-coordinate is back on: restart the loops you paused, then check every session.",
+        ),
+        Some(RunKind::RoutineCheck) => {
+            let titles = working
+                .iter()
+                .map(|title| quoted_title(title))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let count = match working.len() {
+                1 => "1 session is".to_owned(),
+                n => format!("{n} sessions are"),
+            };
+            text.push_str(&format!(" Routine check: {count} still working: {titles}."));
+        }
     }
     if !updates.is_empty() {
         let changes = updates
@@ -308,6 +362,35 @@ pub(crate) fn wakeup_text(
     text
 }
 
+/// What switching auto-coordinate off types into a coordinator already in conversation. The
+/// session stays open; only acting on its own stops.
+pub(crate) fn pause_text() -> String {
+    format!(
+        "{AUTO_COORDINATE_MARKER} Paused. Pause all loops: stop every loop, monitor and \
+         scheduled check you have running, and until auto-coordinate is back on, don't message, \
+         rename or reorganize sessions on your own. Keep helping when the user asks. Reply in one \
+         short line."
+    )
+}
+
+/// The first message a new coordinator's start screen offers while auto-coordinate is on, or
+/// `None` when no tactic is on. The user sends it, so the loop starts only when they say so.
+pub(crate) fn kickoff_text(tactics: &[Tactic]) -> Option<String> {
+    if tactics.is_empty() {
+        return None;
+    }
+    let tactics = tactics
+        .iter()
+        .map(|tactic| tactic.wakeup_name())
+        .collect::<Vec<_>>()
+        .join(", ");
+    Some(format!(
+        "Start auto-coordinating this project with these tactics: {tactics}. Check every session \
+         now; Clinch will check in with you after that. Follow the Auto-coordinate section of the \
+         clinch-coordinate skill."
+    ))
+}
+
 /// What the coordinator row and popover say about auto-coordinate.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum AutoCoordinateStatus {
@@ -317,6 +400,8 @@ pub(crate) enum AutoCoordinateStatus {
     WaitingForCoordinator,
     /// Something is due, but the user is typing to the coordinator.
     WaitingForUser,
+    /// Something is due, but the coordinator's agent is still starting.
+    WaitingForAgent,
     /// The coordinator is not running a Claude Code, Codex or Devin session.
     CoordinatorUnavailable,
 }
@@ -332,6 +417,7 @@ impl AutoCoordinateStatus {
             | "rich_input"
             | "recent_input"
             | "unverified_composer" => Self::WaitingForUser,
+            "not_started" | "starting" | "unknown_conversation" => Self::WaitingForAgent,
             "no_agent" | "unsupported_provider" | "remote_session" | "agent_not_writable" => {
                 Self::CoordinatorUnavailable
             }
@@ -346,17 +432,21 @@ impl AutoCoordinateStatus {
 pub(crate) struct AutoCoordinateState {
     planner: WakePlanner,
     timer_scheduled: bool,
-    /// A run the user asked for (Run now, or switching Auto on) that has not gone out yet.
-    run_requested: bool,
+    /// The loop's next routine check is scheduled.
+    loop_scheduled: bool,
+    /// A run that has not gone out yet: Run now, switching Auto back on, or a routine check.
+    pending_run: Option<RunKind>,
+    /// Auto-coordinate was switched off and the coordinator has not been told to pause yet.
+    pause_pending: bool,
     pub(crate) status: AutoCoordinateStatus,
     pub(crate) last_run: Option<chrono::DateTime<chrono::Local>>,
 }
 
 impl AutoCoordinateState {
-    /// Forgets queued updates and any requested run.
+    /// Forgets queued updates and any pending run.
     fn drop_pending(&mut self) {
         self.planner.clear();
-        self.run_requested = false;
+        self.pending_run = None;
     }
 }
 
@@ -383,19 +473,89 @@ impl Workspace {
             .count()
     }
 
+    /// Claude Code and Codex sessions the coordinator is watching that are working right now, by
+    /// tab title, one per tab.
+    fn auto_coordinate_working_sessions(&self, app: &AppContext) -> Vec<String> {
+        let sessions = CLIAgentSessionsModel::as_ref(app);
+        self.tabs
+            .iter()
+            .filter(|tab| !tab.coordinator)
+            .filter(|tab| {
+                tab.pane_group
+                    .as_ref(app)
+                    .terminal_views(app)
+                    .iter()
+                    .any(|terminal| {
+                        sessions.session(terminal.id()).is_some_and(|session| {
+                            matches!(session.status, CLIAgentSessionStatus::InProgress)
+                        })
+                    })
+            })
+            .map(|tab| tab.pane_group.as_ref(app).display_title(app))
+            .collect()
+    }
+
+    /// The pane the coordinator runs in.
+    fn coordinator_terminal(&self, app: &AppContext) -> Option<ViewHandle<TerminalView>> {
+        let index = self.coordinator_tab_index()?;
+        self.tabs[index]
+            .pane_group
+            .as_ref(app)
+            .focused_session_view(app)
+    }
+
+    /// Whether the coordinator is still on its start screen, so the loop waits for the first
+    /// message the user sends.
+    fn coordinator_awaiting_first_message(&self, app: &AppContext) -> bool {
+        self.coordinator_terminal(app)
+            .is_some_and(|terminal| terminal.as_ref(app).coordinator_awaiting_first_message(app))
+    }
+
+    /// The first message a new coordinator's start screen offers: the one that starts the loop,
+    /// while auto-coordinate is on.
+    pub(super) fn coordinator_kickoff(&self, app: &AppContext) -> Option<String> {
+        self.auto_coordinate_enabled(app)
+            .then(|| kickoff_text(&enabled_tactics(app)))
+            .flatten()
+    }
+
+    /// Offers the current first message on the coordinator's start screen, or withdraws it.
+    pub(super) fn refresh_coordinator_kickoff(&self, ctx: &mut ViewContext<Self>) {
+        let kickoff = self.coordinator_kickoff(ctx);
+        if let Some(terminal) = self.coordinator_terminal(ctx) {
+            terminal.update(ctx, |terminal, ctx| {
+                terminal.set_coordinator_kickoff(kickoff, ctx);
+            });
+        }
+    }
+
+    /// The coordinator row's switch. On a coordinator that has not started its conversation, it
+    /// only offers or withdraws the first message that starts the loop. Otherwise off pauses the
+    /// coordinator, which stays open, and on resumes it.
     pub(crate) fn set_auto_coordinate(&mut self, enabled: bool, ctx: &mut ViewContext<Self>) {
         let Some(index) = self.coordinator_tab_index() else {
             return;
         };
         let was_enabled = self.auto_coordinate_enabled(ctx);
         self.tabs[index].auto_coordinate = Some(enabled);
-        if enabled && !was_enabled {
-            // A first look right away, so turning it on visibly does something (for example,
-            // naming the sessions already open) instead of waiting for the next finished turn.
-            self.run_coordinator_now(ctx);
+        if self.coordinator_awaiting_first_message(ctx) {
+            self.auto_coordinate.drop_pending();
+            self.auto_coordinate.pause_pending = false;
+            self.auto_coordinate.status = AutoCoordinateStatus::Idle;
+            self.refresh_coordinator_kickoff(ctx);
+        } else if enabled && !was_enabled {
+            // Picks up right away, so turning it on visibly does something (for example, naming
+            // the sessions already open) instead of waiting for the next finished turn.
+            self.auto_coordinate.pause_pending = false;
+            self.attempt_auto_coordinate_wakeup(Some(RunKind::Resumed), ctx);
+            self.schedule_auto_coordinate_loop(LOOP_INTERVAL, ctx);
         } else if !enabled {
             self.auto_coordinate.drop_pending();
             self.auto_coordinate.status = AutoCoordinateStatus::Idle;
+            if was_enabled {
+                self.auto_coordinate.pause_pending = true;
+                self.attempt_auto_coordinate_pause(ctx);
+            }
         }
         ctx.dispatch_global_action("workspace:save_app", ());
         ctx.notify();
@@ -408,7 +568,94 @@ impl Workspace {
         ctx: &mut ViewContext<Self>,
     ) {
         tactic.set_enabled(enabled, ctx);
+        if self.coordinator_awaiting_first_message(ctx) {
+            // The offered first message lists the tactics.
+            self.refresh_coordinator_kickoff(ctx);
+        }
         ctx.notify();
+    }
+
+    /// Tells the coordinator to pause every loop and stop acting on its own, once it can take a
+    /// message. A coordinator that is not running an agent has nothing to pause.
+    fn attempt_auto_coordinate_pause(&mut self, ctx: &mut ViewContext<Self>) {
+        if !self.auto_coordinate.pause_pending {
+            return;
+        }
+        let Some(terminal) = self
+            .coordinator_terminal(ctx)
+            // One that has had no conversation has started no loops.
+            .filter(|terminal| !terminal.as_ref(ctx).coordinator_has_no_conversation(ctx))
+        else {
+            self.finish_auto_coordinate_pause(ctx);
+            return;
+        };
+        let (revision, unavailable) = terminal.as_ref(ctx).local_control_agent_readiness(ctx);
+        if let Some(reason) = unavailable {
+            let held = AutoCoordinateStatus::held_by(reason);
+            if held == AutoCoordinateStatus::CoordinatorUnavailable || reason == "not_started" {
+                // No agent runs there, or a restored one has not started yet: no loop is running.
+                self.finish_auto_coordinate_pause(ctx);
+            } else {
+                self.auto_coordinate.status = held;
+                self.schedule_auto_coordinate_timer(RETRY_INTERVAL, ctx);
+                ctx.notify();
+            }
+            return;
+        }
+        let sent = terminal.update(ctx, |terminal, ctx| {
+            terminal.local_control_send_agent_text(
+                pause_text(),
+                &revision,
+                AgentSendOrigin::Clinch,
+                |_| {},
+                ctx,
+            )
+        });
+        if sent {
+            self.finish_auto_coordinate_pause(ctx);
+        } else {
+            self.auto_coordinate.status = AutoCoordinateStatus::WaitingForCoordinator;
+            self.schedule_auto_coordinate_timer(RETRY_INTERVAL, ctx);
+            ctx.notify();
+        }
+    }
+
+    pub(super) fn finish_auto_coordinate_pause(&mut self, ctx: &mut ViewContext<Self>) {
+        self.auto_coordinate.pause_pending = false;
+        self.auto_coordinate.status = AutoCoordinateStatus::Idle;
+        ctx.notify();
+    }
+
+    /// The loop's clock. Each tick runs a routine check when sessions are working and nothing has
+    /// woken the coordinator for a full interval, then schedules the next. It stops while
+    /// auto-coordinate is off; switching it on or any session change starts it again.
+    fn schedule_auto_coordinate_loop(&mut self, delay: Duration, ctx: &mut ViewContext<Self>) {
+        if self.auto_coordinate.loop_scheduled {
+            return;
+        }
+        self.auto_coordinate.loop_scheduled = true;
+        ctx.spawn(async move { Timer::after(delay).await }, |me, _, ctx| {
+            me.auto_coordinate.loop_scheduled = false;
+            me.run_auto_coordinate_loop(ctx);
+        });
+    }
+
+    fn run_auto_coordinate_loop(&mut self, ctx: &mut ViewContext<Self>) {
+        if !self.auto_coordinate_enabled(ctx) {
+            return;
+        }
+        let wait = self
+            .auto_coordinate
+            .planner
+            .routine_check_in(Instant::now());
+        if wait.is_zero() && !self.auto_coordinate_working_sessions(ctx).is_empty() {
+            self.attempt_auto_coordinate_wakeup(Some(RunKind::RoutineCheck), ctx);
+        }
+        let wait = self
+            .auto_coordinate
+            .planner
+            .routine_check_in(Instant::now());
+        self.schedule_auto_coordinate_loop(if wait.is_zero() { LOOP_INTERVAL } else { wait }, ctx);
     }
 
     /// Records a session change for the coordinator. Called for every agent event in this
@@ -419,6 +666,12 @@ impl Workspace {
         event: &CLIAgentSessionsModelEvent,
         ctx: &mut ViewContext<Self>,
     ) {
+        if self
+            .coordinator_terminal(ctx)
+            .is_some_and(|terminal| terminal.id() == event.terminal_view_id())
+        {
+            self.retry_held_auto_coordinate(ctx);
+        }
         let CLIAgentSessionsModelEvent::StatusChanged {
             terminal_view_id,
             status,
@@ -427,12 +680,14 @@ impl Workspace {
         else {
             return;
         };
-        let Some(kind) = UpdateKind::from_status(status) else {
-            return;
-        };
         if !self.auto_coordinate_enabled(ctx) {
             return;
         }
+        // Sessions are active, so the loop runs; a session starting work is what it watches for.
+        self.schedule_auto_coordinate_loop(LOOP_INTERVAL, ctx);
+        let Some(kind) = UpdateKind::from_status(status) else {
+            return;
+        };
         let Some(tab) = self.tabs.iter().find(|tab| {
             tab.pane_group
                 .as_ref(ctx)
@@ -458,6 +713,18 @@ impl Workspace {
         self.schedule_auto_coordinate_attempt(ctx);
     }
 
+    /// Sends what is held for the coordinator as soon as its own agent reports in, such as when it
+    /// finishes starting or ends a turn, rather than at the next retry.
+    fn retry_held_auto_coordinate(&mut self, ctx: &mut ViewContext<Self>) {
+        if self.auto_coordinate.pause_pending {
+            self.attempt_auto_coordinate_pause(ctx);
+        } else if self.auto_coordinate.pending_run.is_some()
+            || self.auto_coordinate.status != AutoCoordinateStatus::Idle
+        {
+            self.attempt_auto_coordinate_wakeup(self.auto_coordinate.pending_run, ctx);
+        }
+    }
+
     fn schedule_auto_coordinate_attempt(&mut self, ctx: &mut ViewContext<Self>) {
         if let Some(due_at) = self.auto_coordinate.planner.due_at() {
             let delay = due_at.saturating_duration_since(Instant::now());
@@ -466,7 +733,7 @@ impl Workspace {
     }
 
     /// One timer at a time. When it fires it sends whatever is outstanding: due updates, a
-    /// requested run, or both.
+    /// pending run, a pause, or any of these.
     fn schedule_auto_coordinate_timer(&mut self, delay: Duration, ctx: &mut ViewContext<Self>) {
         if self.auto_coordinate.timer_scheduled {
             return;
@@ -474,9 +741,13 @@ impl Workspace {
         self.auto_coordinate.timer_scheduled = true;
         ctx.spawn(async move { Timer::after(delay).await }, |me, _, ctx| {
             me.auto_coordinate.timer_scheduled = false;
-            let requested = me.auto_coordinate.run_requested;
-            if requested || me.auto_coordinate.planner.has_pending() {
-                me.attempt_auto_coordinate_wakeup(requested, ctx);
+            if me.auto_coordinate.pause_pending {
+                me.attempt_auto_coordinate_pause(ctx);
+                return;
+            }
+            let run = me.auto_coordinate.pending_run;
+            if run.is_some() || me.auto_coordinate.planner.has_pending() {
+                me.attempt_auto_coordinate_wakeup(run, ctx);
             }
         });
     }
@@ -484,16 +755,21 @@ impl Workspace {
     /// Runs the coordinator now with whatever has changed so far, whether or not auto-coordinate
     /// is on.
     pub(crate) fn run_coordinator_now(&mut self, ctx: &mut ViewContext<Self>) {
-        self.attempt_auto_coordinate_wakeup(true, ctx);
+        self.attempt_auto_coordinate_wakeup(Some(RunKind::Requested), ctx);
     }
 
-    fn attempt_auto_coordinate_wakeup(&mut self, requested: bool, ctx: &mut ViewContext<Self>) {
-        let Some(coordinator_index) = self.coordinator_tab_index() else {
+    fn attempt_auto_coordinate_wakeup(
+        &mut self,
+        run: Option<RunKind>,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        if self.coordinator_tab_index().is_none() {
             // The coordinator was closed; there is no one to wake.
             self.auto_coordinate.drop_pending();
             return;
-        };
-        if !requested && !self.auto_coordinate_enabled(ctx) {
+        }
+        // Only Run now works with auto-coordinate off.
+        if run != Some(RunKind::Requested) && !self.auto_coordinate_enabled(ctx) {
             self.auto_coordinate.drop_pending();
             return;
         }
@@ -504,8 +780,9 @@ impl Workspace {
             return;
         }
         let now = Instant::now();
-        let updates = if requested {
-            self.auto_coordinate.run_requested = true;
+        let run = run.max(self.auto_coordinate.pending_run);
+        let updates = if run.is_some() {
+            self.auto_coordinate.pending_run = run;
             self.auto_coordinate.planner.take_all()
         } else {
             let Some(updates) = self.auto_coordinate.planner.take_due(now) else {
@@ -514,12 +791,18 @@ impl Workspace {
             };
             updates
         };
+        let working = if run == Some(RunKind::RoutineCheck) {
+            self.auto_coordinate_working_sessions(ctx)
+        } else {
+            Vec::new()
+        };
+        if run == Some(RunKind::RoutineCheck) && working.is_empty() && updates.is_empty() {
+            // Everything finished while the check was held; those turns wake it themselves.
+            self.auto_coordinate.pending_run = None;
+            return;
+        }
 
-        let Some(terminal) = self.tabs[coordinator_index]
-            .pane_group
-            .as_ref(ctx)
-            .focused_session_view(ctx)
-        else {
+        let Some(terminal) = self.coordinator_terminal(ctx) else {
             self.hold_auto_coordinate_wakeup(
                 AutoCoordinateStatus::CoordinatorUnavailable,
                 updates,
@@ -528,8 +811,20 @@ impl Workspace {
             );
             return;
         };
+        if run != Some(RunKind::Requested)
+            && terminal.as_ref(ctx).coordinator_awaiting_first_message(ctx)
+        {
+            // The loop starts with the first message the user sends from the start screen, which
+            // has the coordinator check every session anyway.
+            self.auto_coordinate.drop_pending();
+            self.auto_coordinate.status = AutoCoordinateStatus::Idle;
+            ctx.notify();
+            return;
+        }
 
-        let (revision, unavailable) = terminal.as_ref(ctx).local_control_agent_readiness(ctx);
+        let (revision, unavailable) = terminal
+            .as_ref(ctx)
+            .agent_send_readiness(AgentSendOrigin::Clinch, ctx);
         if let Some(reason) = unavailable {
             if reason == "not_started" {
                 // A restored coordinator is asleep until something needs it. Wake it, the
@@ -545,9 +840,22 @@ impl Workspace {
             return;
         }
 
-        let text = wakeup_text(&updates, &tactics, requested);
+        // A coordinator with no conversation yet starts with the message that starts the loop and
+        // has it check every session, whatever woke it.
+        let text = terminal
+            .as_ref(ctx)
+            .coordinator_has_no_conversation(ctx)
+            .then(|| kickoff_text(&tactics))
+            .flatten()
+            .unwrap_or_else(|| wakeup_text(&updates, &tactics, run, &working));
         let sent = terminal.update(ctx, |terminal, ctx| {
-            terminal.local_control_send_agent_text(text, &revision, |_| {}, ctx)
+            terminal.local_control_send_agent_text(
+                text,
+                &revision,
+                AgentSendOrigin::Clinch,
+                |_| {},
+                ctx,
+            )
         });
         if !sent {
             self.hold_auto_coordinate_wakeup(
@@ -559,7 +867,7 @@ impl Workspace {
             return;
         }
         self.auto_coordinate.planner.mark_woken(now);
-        self.auto_coordinate.run_requested = false;
+        self.auto_coordinate.pending_run = None;
         self.auto_coordinate.status = AutoCoordinateStatus::Idle;
         self.auto_coordinate.last_run = Some(chrono::Local::now());
         ctx.notify();
@@ -575,14 +883,35 @@ impl Workspace {
     ) {
         self.auto_coordinate.status = status;
         self.auto_coordinate.planner.hold(updates, now);
-        self.schedule_auto_coordinate_timer(RETRY_INTERVAL, ctx);
+        let first_message = self
+            .coordinator_terminal(ctx)
+            .is_some_and(|terminal| terminal.as_ref(ctx).coordinator_has_no_conversation(ctx));
+        self.schedule_auto_coordinate_timer(
+            if first_message {
+                FIRST_MESSAGE_RETRY_INTERVAL
+            } else {
+                RETRY_INTERVAL
+            },
+            ctx,
+        );
         ctx.notify();
     }
 
     /// One line for the popover header: what auto-coordinate is doing right now.
     pub(crate) fn auto_coordinate_summary(&self, app: &AppContext) -> String {
         if !self.auto_coordinate_enabled(app) {
-            return "Off. The coordinator only acts when you ask it.".to_owned();
+            if self.auto_coordinate.pause_pending {
+                return match self.auto_coordinate.status {
+                    AutoCoordinateStatus::WaitingForUser => {
+                        "Pausing once you finish typing to the coordinator.".to_owned()
+                    }
+                    _ => "Pausing once the coordinator finishes its turn.".to_owned(),
+                };
+            }
+            return "Paused. The coordinator only acts when you ask it.".to_owned();
+        }
+        if self.coordinator_awaiting_first_message(app) {
+            return "Starts when you send the coordinator its first message.".to_owned();
         }
         match self.auto_coordinate.status {
             AutoCoordinateStatus::WaitingForUser => {
@@ -590,6 +919,9 @@ impl Workspace {
             }
             AutoCoordinateStatus::WaitingForCoordinator => {
                 "Waiting for the coordinator to finish its turn.".to_owned()
+            }
+            AutoCoordinateStatus::WaitingForAgent => {
+                "Waiting for the coordinator to start.".to_owned()
             }
             AutoCoordinateStatus::CoordinatorUnavailable => {
                 "The coordinator isn't running Claude Code, Codex or Devin.".to_owned()
@@ -720,7 +1052,7 @@ pub(crate) fn render_auto_controls(
         .with_child(super::vertical_tabs::render_row_switch(
             enabled,
             if enabled {
-                "Turn auto-coordinate off"
+                "Pause auto-coordinate"
             } else {
                 "Turn auto-coordinate on"
             },
@@ -896,8 +1228,9 @@ pub(crate) fn render_auto_coordinate_popover(
                 Expanded::new(
                     1.,
                     Text::new(
-                        "Runs after sessions finish a turn, at most every 2 minutes, using your \
-                         Claude or Codex plan."
+                        "Checks in when sessions finish a turn, at most every 2 minutes, and \
+                         every 10 minutes while any are working. Uses your Claude, Codex or \
+                         Devin plan."
                             .to_owned(),
                         font_family,
                         11.,

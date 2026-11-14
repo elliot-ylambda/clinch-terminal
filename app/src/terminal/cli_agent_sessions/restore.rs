@@ -18,6 +18,7 @@ use crate::agent_resume::{
     RESTART_CONTINUE_MARKER,
 };
 use crate::settings::ClinchSettings;
+use crate::terminal::view::use_agent_footer::AgentSendOrigin;
 use crate::terminal::view::TerminalView;
 use crate::workspace::WorkspaceRegistry;
 
@@ -552,6 +553,7 @@ impl AgentRestoreQueue {
                     view.local_control_send_agent_text(
                         restart_continue_prompt(),
                         &revision,
+                        AgentSendOrigin::Clinch,
                         |_| {},
                         ctx,
                     )

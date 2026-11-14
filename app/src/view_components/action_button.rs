@@ -458,6 +458,11 @@ impl ActionButton {
         ctx.notify();
     }
 
+    pub fn set_icon_color(&mut self, icon_color: Option<ColorU>, ctx: &mut ViewContext<Self>) {
+        self.icon_color = icon_color;
+        ctx.notify();
+    }
+
     pub fn set_label(&mut self, label: impl Into<Cow<'static, str>>, ctx: &mut ViewContext<Self>) {
         self.label = label.into();
         ctx.notify();

@@ -30,8 +30,24 @@ use warp_util::standardized_path::StandardizedPath;
 
 use crate::ai::block_context::BlockContext;
 use crate::global_resource_handles::GlobalResourceHandlesProvider;
+mod coordinator_start_screen;
+pub(crate) use coordinator_start_screen::start_screen_project_name;
+pub use coordinator_start_screen::COORDINATOR_HARNESS_PICKER_POSITION_ID;
+mod harness_picker;
+pub(crate) use harness_picker::{
+    agent_display_name, coordinator_choices, HarnessPicker, HarnessPickerEvent, PickerPlacement,
+    StartChoice,
+};
+#[cfg(feature = "local_fs")]
+mod new_tab_start_screen;
+#[cfg(feature = "local_fs")]
+pub use new_tab_start_screen::{
+    NewTabView, NEW_TAB_CHAT_TOGGLE_POSITION_ID, NEW_TAB_START_PICKER_POSITION_ID,
+    NEW_TAB_TERMINAL_TOGGLE_POSITION_ID,
+};
 pub(crate) mod docker_sandbox;
 mod link_detection;
+mod one_box_input;
 mod open_in_warp;
 mod pane_impl;
 mod passive_suggestions;
@@ -453,6 +469,9 @@ use crate::terminal::model::terminal_model::{
 };
 use crate::terminal::model::{ObfuscateSecrets, RespectObfuscatedSecrets, SecretHandle};
 use crate::terminal::model_events::{AnsiHandlerEvent, ModelEvent, ModelEventDispatcher};
+use crate::terminal::one_box_composer::{
+    opens_rich_input_on_start, supports_one_box, OneBoxComposer, OneBoxKey,
+};
 use crate::terminal::recorder::PtyRecorder;
 use crate::terminal::safe_mode_settings::get_secret_obfuscation_mode;
 use crate::terminal::session_settings::{
@@ -2927,6 +2946,12 @@ pub struct TerminalView {
     /// A background-work scan of the agent's status line is scheduled; see
     /// `cli_agent_background_work`.
     cli_agent_background_scan_pending: bool,
+    /// One-box agent input bookkeeping; see `one_box_input`.
+    one_box: one_box_input::OneBoxState,
+    /// A Coordinator pane's start screen; see `coordinator_start_screen`.
+    coordinator_start: Option<coordinator_start_screen::CoordinatorStart>,
+    #[cfg(feature = "local_fs")]
+    new_tab_start: Option<new_tab_start_screen::NewTabStart>,
 
     agent_view_controller: ModelHandle<AgentViewController>,
     agent_view_back_button: ViewHandle<ActionButton>,
@@ -4978,6 +5003,10 @@ impl TerminalView {
             cli_subagent_controller,
             use_agent_footer: use_agent_button_bar,
             cli_agent_background_scan_pending: false,
+            one_box: Default::default(),
+            coordinator_start: None,
+            #[cfg(feature = "local_fs")]
+            new_tab_start: None,
             agent_view_controller,
             agent_view_back_button,
             orchestration_pill_bar,
@@ -9202,6 +9231,12 @@ impl TerminalView {
             }
         }
 
+        // Ctrl-C that cleared text from a CLI agent's rich input only clears it, like an agent's own
+        // composer. An empty box passes Ctrl-C through to interrupt or exit the agent.
+        if cleared_buffer_len > 0 && self.has_active_cli_agent_input_session(ctx) {
+            return;
+        }
+
         self.ctrl_c(ctx);
     }
 
@@ -9893,6 +9928,8 @@ impl TerminalView {
             });
         }
 
+        self.note_one_box_pty_write(&bytes);
+
         let bytes_vec = bytes.to_vec();
         self.clear_selected_blocks(ctx);
         self.update_scroll_position_locking(ScrollPositionUpdate::AfterWriteUserBytesToPty, ctx);
@@ -10170,6 +10207,7 @@ impl TerminalView {
             footer.notify_and_notify_children(ctx);
         });
         self.schedule_cli_agent_background_scan(ctx);
+        self.schedule_one_box_scan(ctx);
 
         // Need to re-render both the alt screen and the blocklist on keypresses.
         ctx.notify();
@@ -12273,6 +12311,9 @@ impl TerminalView {
             }
             ModelEvent::BlockCompleted(block_completed_event) => {
                 record_trace_event!("command_execution:block_completed");
+                // Once the block's completion has been handled.
+                #[cfg(feature = "local_fs")]
+                ctx.spawn(async {}, |me, (), ctx| me.note_new_tab_block_completed(ctx));
                 end_trace_after_next!("window:redraw:end");
                 let block_completed_event_clone = block_completed_event.clone();
                 self.input.update(ctx, |input, ctx| {
@@ -12426,6 +12467,8 @@ impl TerminalView {
                 if *is_for_in_band_command {
                     return;
                 }
+                #[cfg(feature = "local_fs")]
+                self.note_new_tab_command_started(command, ctx);
                 self.did_notify_long_running = false;
                 ctx.emit(Event::BlockStarted {
                     is_for_in_band_command: *is_for_in_band_command,
@@ -13246,6 +13289,8 @@ impl TerminalView {
             }
             ModelEvent::BootstrapPrecmdDone => {
                 self.execute_pending_command((), ctx);
+                #[cfg(feature = "local_fs")]
+                self.run_waiting_new_tab_command(ctx);
             }
             ModelEvent::AgentTaggedInChanged {
                 block_id,
@@ -13728,8 +13773,7 @@ impl TerminalView {
             CLIAgentSessionListener::new(view_id, agent, &model_events_handle, ctx)
         });
         let remote_host = self.active_session_remote_host(ctx);
-        let should_auto_toggle_input =
-            *AISettings::as_ref(ctx).auto_open_rich_input_on_cli_agent_start;
+        let should_auto_toggle_input = opens_rich_input_on_start(agent, ctx);
         // Seed context from the event that caused registration before the
         // listener subscribes to future events.
         CLIAgentSessionsModel::handle(ctx).update(ctx, |sessions_model, ctx| {
@@ -13879,6 +13923,9 @@ impl TerminalView {
     /// CLI agent session. Called after creating a command-detected session or
     /// registering a listener so rich input is shown immediately.
     fn maybe_auto_open_cli_agent_rich_input(&mut self, ctx: &mut ViewContext<Self>) {
+        self.note_coordinator_agent_started(ctx);
+        // One-box sessions open once their composer is on screen, which the scan checks.
+        self.schedule_one_box_scan(ctx);
         let ai_settings = AISettings::as_ref(ctx);
         if !*ai_settings.auto_open_rich_input_on_cli_agent_start
             || !ai_settings.is_any_ai_enabled(ctx)
@@ -13922,8 +13969,7 @@ impl TerminalView {
                         status: CLIAgentSessionStatus::InProgress,
                         session_context: CLIAgentSessionContext::default(),
                         input_state: CLIAgentInputState::Closed,
-                        should_auto_toggle_input: *AISettings::as_ref(ctx)
-                            .auto_open_rich_input_on_cli_agent_start,
+                        should_auto_toggle_input: opens_rich_input_on_start(agent, ctx),
                         listener: None,
                         plugin_version: None,
                         remote_host,
@@ -14035,6 +14081,8 @@ impl TerminalView {
         {
             self.update_pane_configuration(ctx);
             self.sync_cli_agent_message_history_dropdown(ctx);
+            // A restored Coordinator learns it has no conversation once its history loads.
+            self.offer_coordinator_kickoff(ctx);
             ctx.notify();
         }
         if event.terminal_view_id() == self.view_id
@@ -22819,7 +22867,22 @@ impl TerminalView {
                 self.select_most_recent_blocks(*count, ctx)
             }
             InputEvent::Copy => self.copy(ctx),
+            InputEvent::ForwardKeyToOneBoxAgent(key) => {
+                self.forward_key_to_one_box_agent(*key, ctx);
+            }
+            InputEvent::OneBoxCommandEdited => self.sync_one_box_command(ctx),
+            #[cfg(feature = "local_fs")]
+            InputEvent::StartScreenSubmitted(text) => self.submit_new_tab_start(text.clone(), ctx),
+            #[cfg(feature = "local_fs")]
+            InputEvent::StartScreenEscape => self.dismiss_new_tab_start_screen(ctx),
+            #[cfg(not(feature = "local_fs"))]
+            InputEvent::StartScreenSubmitted(_) | InputEvent::StartScreenEscape => {}
             InputEvent::UnhandledModifierKeyOnEditor(keystroke) => {
+                if let Some(key) = OneBoxKey::from_unhandled_keystroke(keystroke) {
+                    if self.forward_key_to_one_box_agent(key, ctx) {
+                        return;
+                    }
+                }
                 send_telemetry_from_ctx!(
                     TelemetryEvent::EditorUnhandledModifierKey(keystroke.as_ref().to_owned()),
                     ctx
@@ -22936,6 +22999,9 @@ impl TerminalView {
                 ctx.notify();
             }
             InputEvent::Escape => {
+                if self.forward_key_to_one_box_agent(OneBoxKey::Escape, ctx) {
+                    return;
+                }
                 if self.has_active_cli_agent_input_session(ctx) {
                     self.close_cli_agent_rich_input_and_disable_auto_toggle(ctx);
                     return;
@@ -25225,6 +25291,7 @@ impl TerminalView {
         app: &AppContext,
         model: &TerminalModel,
         selection_range: Option<ExpandedSelectionRange<Point>>,
+        one_box_composer: Option<OneBoxComposer>,
     ) -> Box<dyn Element> {
         let appearance = Appearance::as_ref(app);
 
@@ -25275,8 +25342,11 @@ impl TerminalView {
         if let Some(width_scale) = self.native_cli_agent_block_cursor_width_scale(app) {
             alt_screen_element = alt_screen_element.with_block_cursor_width_scale(width_scale);
         }
-        if self.should_hide_cli_agent_cursor_cell(app) {
+        if self.should_hide_cli_agent_cursor_cell(one_box_composer, app) {
             alt_screen_element = alt_screen_element.with_hide_cursor_cell();
+        }
+        if let Some(one_box_composer) = one_box_composer {
+            alt_screen_element = alt_screen_element.with_one_box_composer(one_box_composer);
         }
         alt_screen_element =
             alt_screen_element.with_shared_session_presence(self.shared_session_presence_manager());
@@ -25377,10 +25447,17 @@ impl TerminalView {
 
     /// Returns true when cursor rendering should be suppressed because the
     /// CLI agent rich input is open.
-    fn should_hide_cli_agent_cursor_cell(&self, app: &AppContext) -> bool {
-        CLIAgentSessionsModel::as_ref(app)
-            .session(self.view_id)
-            .is_some_and(|s| matches!(s.input_state, CLIAgentInputState::Open { .. }))
+    fn should_hide_cli_agent_cursor_cell(
+        &self,
+        one_box_composer: Option<OneBoxComposer>,
+        app: &AppContext,
+    ) -> bool {
+        // One-box mode covers the composer, cursor included, and a screen it shows through must
+        // keep its cursor.
+        one_box_composer.is_none()
+            && CLIAgentSessionsModel::as_ref(app)
+                .session(self.view_id)
+                .is_some_and(|s| matches!(s.input_state, CLIAgentInputState::Open { .. }))
     }
 
     fn native_cli_agent_block_cursor_width_scale(&self, app: &AppContext) -> Option<f32> {
@@ -25398,6 +25475,7 @@ impl TerminalView {
         model: &TerminalModel,
         input_mode: InputMode,
         is_scrollable: bool,
+        one_box_composer: Option<OneBoxComposer>,
         app: &AppContext,
     ) -> Box<dyn Element> {
         let appearance = Appearance::as_ref(app);
@@ -25559,8 +25637,11 @@ impl TerminalView {
             element = element.with_block_cursor_width_scale(width_scale);
         }
 
-        if self.should_hide_cli_agent_cursor_cell(app) {
+        if self.should_hide_cli_agent_cursor_cell(one_box_composer, app) {
             element = element.with_hide_cursor_cell();
+        }
+        if let Some(one_box_composer) = one_box_composer {
+            element = element.with_one_box_composer(one_box_composer);
         }
 
         // Pass voice input toggle key if the CLI agent footer should be rendered
@@ -25753,7 +25834,7 @@ impl TerminalView {
         .map(|size| Pixels::new(size.y()))
         .unwrap_or(self.size_info.pane_height_px());
         let waterfall_gap_element = WaterfallGapElement::new(
-            self.render_block_list_element(model, InputMode::Waterfall, false, app),
+            self.render_block_list_element(model, InputMode::Waterfall, false, None, app),
             input_element,
             (model.block_list().block_heights().summary().height)
                 .to_pixels(self.size_info.cell_height_px()),
@@ -28934,6 +29015,11 @@ impl View for TerminalView {
         };
 
         let mut did_wrap_terminal_size = false;
+        // Set in the branch that lays out the output area and input below, the only one where
+        // Clinch's input box can replace the agent's composer, or sit on a Coordinator's start
+        // screen.
+        let mut one_box_composer = None;
+        let mut start_screen = None;
 
         fn wrap_in_terminal_size_element(
             resize_tx: &Sender<Vector2F>,
@@ -28962,6 +29048,12 @@ impl View for TerminalView {
                         && !self.is_ambient_agent_session(app);
                     let is_loading_transcript = model.is_loading_conversation_transcript();
                     let should_show_loading = is_view_pending_clause || is_loading_transcript;
+                    one_box_composer = (!should_show_loading)
+                        .then(|| self.one_box_composer(&model, app))
+                        .flatten();
+                    start_screen = (!should_show_loading)
+                        .then(|| self.coordinator_start_screen_phase(one_box_composer, app))
+                        .flatten();
                     let output_area = if should_show_loading {
                         self.render_viewer_loading(app)
                     } else if is_alt_screen_active {
@@ -28972,10 +29064,39 @@ impl View for TerminalView {
                                 app,
                                 &model,
                                 model.alt_screen().selection_range(semantic_selection),
+                                one_box_composer,
                             ),
                         )
                     } else {
-                        self.render_block_list_element(&model, input_mode, true, app)
+                        self.render_block_list_element(
+                            &model,
+                            input_mode,
+                            true,
+                            one_box_composer,
+                            app,
+                        )
+                    };
+                    // A fresh tab's toggle, and its chat view, which places the input in the
+                    // middle of the pane.
+                    #[cfg(feature = "local_fs")]
+                    let new_tab_empty_state = start_screen.is_none()
+                        && !should_show_loading
+                        && !is_alt_screen_active
+                        && !is_long_running_command
+                        && self.new_tab_empty_state_shows();
+                    #[cfg(not(feature = "local_fs"))]
+                    let new_tab_empty_state = false;
+                    #[cfg(feature = "local_fs")]
+                    let new_tab_start = new_tab_empty_state && self.new_tab_start_screen_shows();
+                    #[cfg(not(feature = "local_fs"))]
+                    let new_tab_start = false;
+                    let output_area = match start_screen {
+                        Some(phase) => self.with_coordinator_start_screen(output_area, phase, app),
+                        #[cfg(feature = "local_fs")]
+                        None if new_tab_empty_state => {
+                            self.with_new_tab_empty_state(output_area, app)
+                        }
+                        None => output_area,
                     };
 
                     let should_render_sticky_toolbelt_footer =
@@ -29001,7 +29122,11 @@ impl View for TerminalView {
                     }
 
                     if self.is_input_box_visible(&model, app) {
-                        column.add_child(self.render_input());
+                        // One-box mode places the input over the agent's composer instead, and a
+                        // Coordinator's start screen places it in the middle of the pane.
+                        if one_box_composer.is_none() && start_screen.is_none() && !new_tab_start {
+                            column.add_child(self.render_input());
+                        }
                     } else if self.should_render_legacy_ambient_agent_loading_footer(&model, app) {
                         column.add_child(ambient_agent::render_loading_footer(appearance));
                     } else if self.show_remote_server_loading_footer(&model, app) {
@@ -29029,6 +29154,10 @@ impl View for TerminalView {
                 }
             }
         };
+
+        if one_box_composer.is_some() && start_screen.is_none() {
+            self.add_one_box_input(&mut stack, model.block_list().size().columns(), app);
+        }
 
         if self.is_any_tooltip_open() {
             self.render_grid_tooltip(&mut stack, &model, appearance, app);
@@ -29556,7 +29685,10 @@ impl View for TerminalView {
             if *AISettings::as_ref(app).should_render_cli_agent_footer {
                 context.set.insert(flags::CLI_AGENT_FOOTER_ENABLED);
 
-                if is_rich_input_chip_in_cli_toolbar(app) {
+                // One-box sessions reopen Clinch's box with Ctrl+G even without the footer chip.
+                if is_rich_input_chip_in_cli_toolbar(app)
+                    || (*AISettings::as_ref(app).one_box_agent_input && supports_one_box(cli_agent))
+                {
                     context.set.insert(flags::CLI_AGENT_RICH_INPUT_CHIP_ENABLED);
                 }
             }

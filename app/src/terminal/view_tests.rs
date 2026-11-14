@@ -77,6 +77,7 @@ use crate::terminal::view::load_ai_conversation::{
     RestoreConversationEntryBehavior, RestoredAIConversation,
 };
 use crate::terminal::view::shared_session::ConversationEndedTombstoneView;
+use crate::terminal::view::use_agent_footer::AgentSendOrigin;
 use crate::terminal::{CLIAgent, MockTerminalManager, TerminalManager, TerminalModel};
 use crate::test_util::terminal::{
     add_window_with_id_and_terminal, initialize_app_for_terminal_view,
@@ -7161,6 +7162,110 @@ fn paste_raw_image_clipboard_in_cli_agent_sends_correct_bytes() {
     run_for_agent(CLIAgent::Codex);
 }
 
+/// Clinch has Warp's own AI off, which once stopped an image pasted into a Claude Code or Codex
+/// box from attaching at all. The agent reads the image, so the box attaches it and pastes it into
+/// the agent ahead of the text.
+#[test]
+fn an_image_pasted_into_the_agent_box_is_attached_and_sent_ahead_of_the_text() {
+    use base64::Engine as _;
+
+    App::test((), |mut app| async move {
+        initialize_app_for_terminal_view(&mut app);
+        let _agent_view = FeatureFlag::AgentView.override_enabled(true);
+        let _cli_rich = FeatureFlag::CLIAgentRichInput.override_enabled(true);
+        let _images = FeatureFlag::ImageAsContext.override_enabled(true);
+
+        let terminal = add_window_with_terminal(&mut app, None);
+        let pty_writes: Rc<RefCell<Vec<Vec<u8>>>> = Rc::new(RefCell::new(Vec::new()));
+        let writes = pty_writes.clone();
+        app.update(|ctx| {
+            ctx.subscribe_to_view(&terminal, move |_, event, _| {
+                if let Event::WriteBytesToPty { bytes } = event {
+                    writes.borrow_mut().push(bytes.to_vec());
+                }
+            });
+        });
+
+        terminal.update(&mut app, |view, ctx| {
+            CLIAgentSessionsModel::handle(ctx).update(ctx, |sessions, ctx| {
+                sessions.set_session(
+                    view.view_id,
+                    CLIAgentSession {
+                        agent: CLIAgent::Claude,
+                        status: CLIAgentSessionStatus::Success,
+                        session_context: CLIAgentSessionContext::default(),
+                        input_state: CLIAgentInputState::Closed,
+                        should_auto_toggle_input: false,
+                        listener: None,
+                        remote_host: None,
+                        plugin_version: None,
+                        draft_text: None,
+                        custom_command_prefix: None,
+                        received_rich_notification: false,
+                        has_observed_turn_activity: false,
+                        turn_interrupted_by_user: false,
+                        prompt_history: Default::default(),
+                        prompt_history_load_state: Default::default(),
+                        prompt_history_generation: 0,
+                    },
+                    ctx,
+                );
+            });
+            {
+                let mut model = view.model.lock();
+                model.simulate_long_running_block("claude", "");
+                model.set_mode(ansi::Mode::BracketedPaste);
+            }
+            view.open_cli_agent_rich_input(CLIAgentInputEntrypoint::FooterButton, ctx);
+            assert!(view.has_active_cli_agent_input_session(ctx));
+
+            // A screenshot: image data only, no text or paths. A real 1x1 PNG, since the box
+            // decodes what it attaches.
+            let png = base64::engine::general_purpose::STANDARD
+                .decode(
+                    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
+                )
+                .expect("a valid PNG");
+            ctx.clipboard().write(ClipboardContent {
+                images: Some(vec![warpui::clipboard::ImageData {
+                    data: png,
+                    mime_type: "image/png".to_string(),
+                    filename: None,
+                }]),
+                ..Default::default()
+            });
+            view.input
+                .update(ctx, |input, ctx| input.process_paste_event(ctx));
+        });
+
+        assert_eventually!(400 =>
+            terminal.read(&app, |view, ctx| view
+                .ai_context_model
+                .as_ref(ctx)
+                .pending_images()
+                .len()
+                == 1),
+            "the pasted image should be attached to the box"
+        );
+        assert!(
+            pty_writes.borrow().is_empty(),
+            "nothing reaches the agent before the box sends"
+        );
+
+        terminal.update(&mut app, |view, ctx| {
+            view.submit_cli_agent_rich_input("what is this?".to_owned(), ctx);
+        });
+        assert_eventually!(600 =>
+            pty_writes
+                .borrow()
+                .first()
+                .is_some_and(|bytes| cfg!(windows) || bytes == &vec![C0::SYN]),
+            "the image is pasted into the agent first, got {:?}",
+            pty_writes.borrow()
+        );
+    })
+}
+
 #[test]
 fn submit_without_auto_dismiss_keeps_rich_input_open() {
     App::test((), |mut app| async move {
@@ -9324,12 +9429,14 @@ fn exercise_local_control_send(
             assert!(!view.local_control_send_agent_text(
                 "wrong".into(),
                 "stale-revision",
+                AgentSendOrigin::LocalControl,
                 |_| {},
                 ctx
             ));
             assert!(view.local_control_send_agent_text(
                 text,
                 &revision,
+                AgentSendOrigin::LocalControl,
                 move |submitted| *callback.lock().unwrap() = Some(submitted),
                 ctx
             ));
@@ -9558,6 +9665,68 @@ fn devin_without_hook_events_refuses_messages() {
             assert_eq!(
                 view.local_control_agent_readiness(ctx).1,
                 Some("status_unavailable")
+            );
+        });
+    });
+}
+
+/// Codex names its conversation only once the first prompt arrives, so a new Coordinator would
+/// never have one to check before auto-coordinate's first message. Clinch may send that message on
+/// an empty composer; nothing else may, and nothing may once a conversation exists.
+#[test]
+fn a_new_coordinator_takes_clinchs_first_message_before_it_names_a_conversation() {
+    App::test((), |mut app| async move {
+        initialize_app_for_terminal_view(&mut app);
+        app.update(crate::remote_control::register);
+        let terminal = add_window_with_terminal(&mut app, None);
+        terminal.update(&mut app, |view, ctx| {
+            view.model.lock().simulate_long_running_block("devin", "");
+            let set_session =
+                |view: &TerminalView, prompts: Vec<&str>, ctx: &mut ViewContext<TerminalView>| {
+                    CLIAgentSessionsModel::handle(ctx).update(ctx, |sessions, ctx| {
+                        let mut session = cli_agent_session_with_prompts(prompts);
+                        session.agent = CLIAgent::Devin;
+                        session.status = CLIAgentSessionStatus::Success;
+                        session.session_context.session_id = None;
+                        // Devin's composer reads as empty once its hooks have reported.
+                        session.received_rich_notification = true;
+                        session.input_state = CLIAgentInputState::Closed;
+                        session.draft_text = None;
+                        sessions.set_session(view.view_id, session, ctx);
+                    });
+                };
+            set_session(view, Vec::new(), ctx);
+            let unknown = Some("unknown_conversation");
+            assert_eq!(
+                view.agent_send_readiness(AgentSendOrigin::Clinch, ctx).1,
+                unknown
+            );
+
+            view.show_coordinator_start_screen(
+                crate::agent_resume::AgentResumeProvider::Devin,
+                true,
+                None,
+                None,
+                None,
+                ctx,
+            );
+            assert!(view.coordinator_has_no_conversation(ctx));
+            assert_eq!(
+                view.agent_send_readiness(AgentSendOrigin::Clinch, ctx).1,
+                None
+            );
+            assert_eq!(
+                view.agent_send_readiness(AgentSendOrigin::LocalControl, ctx)
+                    .1,
+                unknown
+            );
+            assert_eq!(view.local_control_agent_readiness(ctx).1, unknown);
+
+            set_session(view, vec!["hello"], ctx);
+            assert!(!view.coordinator_has_no_conversation(ctx));
+            assert_eq!(
+                view.agent_send_readiness(AgentSendOrigin::Clinch, ctx).1,
+                unknown
             );
         });
     });
@@ -9815,6 +9984,7 @@ fn local_control_own_slash_command_does_not_block_the_next_send() {
             assert!(view.local_control_send_agent_text(
                 "/model sonnet".into(),
                 &revision,
+                AgentSendOrigin::LocalControl,
                 move |ok| *callback.lock().unwrap() = Some(ok),
                 ctx
             ));
@@ -10017,4 +10187,305 @@ fn showing_a_pane_without_a_deferred_agent_starts_nothing() {
             assert!(!view.deferred_agent_is_starting());
         });
     });
+}
+
+/// Every write a test terminal made to its PTY.
+type PtyWrites = Rc<RefCell<Vec<Vec<u8>>>>;
+
+/// A Claude Code pane in one-box mode: its command running, `prompts` its earlier messages, and
+/// Clinch's box open over its composer. Also returns every write to the PTY.
+fn one_box_claude_pane(app: &mut App, prompts: Vec<&str>) -> (ViewHandle<TerminalView>, PtyWrites) {
+    // The box is off by default for now.
+    AISettings::handle(app).update(app, |settings, ctx| {
+        let _ = settings.one_box_agent_input.set_value(true, ctx);
+    });
+    let (_, terminal) = add_window_with_id_and_terminal(app, None);
+    let pty_writes = PtyWrites::default();
+    let writes = pty_writes.clone();
+    app.update(|ctx| {
+        ctx.subscribe_to_view(&terminal, move |_, event, _| {
+            if let Event::WriteBytesToPty { bytes } = event {
+                writes.borrow_mut().push(bytes.to_vec());
+            }
+        });
+    });
+    terminal.update(app, |view, ctx| {
+        view.model.lock().simulate_long_running_block("claude", "");
+        CLIAgentSessionsModel::handle(ctx).update(ctx, |sessions, ctx| {
+            let mut session = cli_agent_session_with_prompts(prompts);
+            session.agent = CLIAgent::Claude;
+            session.should_auto_toggle_input = true;
+            sessions.set_session(view.view_id, session, ctx);
+        });
+        view.open_cli_agent_rich_input(CLIAgentInputEntrypoint::AutoShow, ctx);
+        assert!(view.has_active_cli_agent_input_session(ctx));
+    });
+    (terminal, pty_writes)
+}
+
+/// Presses a key in the pane's box, the way the keyboard does, and returns the box's text.
+fn press_in_one_box(
+    app: &mut App,
+    terminal: &ViewHandle<TerminalView>,
+    key: crate::editor::EditorAction,
+) -> String {
+    use warpui::TypedActionView as _;
+
+    let editor = terminal.read(app, |view, ctx| view.input.as_ref(ctx).editor().clone());
+    editor.update(app, |editor, ctx| editor.handle_action(&key, ctx));
+    terminal.read(app, |view, ctx| view.input.as_ref(ctx).buffer_text(ctx))
+}
+
+#[test]
+fn one_box_up_and_down_walk_the_agent_messages_not_shell_history() {
+    use crate::editor::EditorAction::{Down, Up};
+
+    App::test((), |mut app| async move {
+        let _cli_rich = FeatureFlag::CLIAgentRichInput.override_enabled(true);
+        initialize_app_for_terminal_view(&mut app);
+        let (terminal, pty_writes) =
+            one_box_claude_pane(&mut app, vec!["first message", "second message"]);
+
+        assert_eq!(press_in_one_box(&mut app, &terminal, Up), "second message");
+        assert_eq!(press_in_one_box(&mut app, &terminal, Up), "first message");
+        assert_eq!(press_in_one_box(&mut app, &terminal, Up), "first message");
+        assert_eq!(
+            press_in_one_box(&mut app, &terminal, Down),
+            "second message"
+        );
+        assert_eq!(press_in_one_box(&mut app, &terminal, Down), "");
+        assert!(pty_writes.borrow().is_empty());
+    })
+}
+
+#[test]
+fn one_box_up_without_known_messages_opens_the_agent_history() {
+    App::test((), |mut app| async move {
+        let _cli_rich = FeatureFlag::CLIAgentRichInput.override_enabled(true);
+        initialize_app_for_terminal_view(&mut app);
+        let (terminal, pty_writes) = one_box_claude_pane(&mut app, Vec::new());
+        let input = terminal.read(&app, |view, _| view.input.clone());
+
+        press_in_one_box(&mut app, &terminal, crate::editor::EditorAction::Up);
+
+        assert_eq!(*pty_writes.borrow(), vec![b"\x1b[A".to_vec()]);
+        assert_eq!(input.read(&app, |input, ctx| input.buffer_text(ctx)), "");
+    })
+}
+
+#[test]
+fn one_box_second_escape_clears_the_box_instead_of_opening_rewind() {
+    App::test((), |mut app| async move {
+        let _cli_rich = FeatureFlag::CLIAgentRichInput.override_enabled(true);
+        initialize_app_for_terminal_view(&mut app);
+        let (terminal, pty_writes) = one_box_claude_pane(&mut app, Vec::new());
+        let escape = |app: &mut App| {
+            terminal.update(app, |view, ctx| {
+                assert!(view.forward_key_to_one_box_agent(OneBoxKey::Escape, ctx));
+                view.input.as_ref(ctx).buffer_text(ctx)
+            })
+        };
+        terminal.update(&mut app, |view, ctx| {
+            view.input
+                .update(ctx, |input, ctx| input.replace_buffer_content("draft", ctx));
+        });
+
+        // The first Escape reaches the agent, where it interrupts a turn; the second clears.
+        assert_eq!(escape(&mut app), "draft");
+        assert_eq!(*pty_writes.borrow(), vec![vec![C0::ESC]]);
+        assert_eq!(escape(&mut app), "");
+        assert_eq!(pty_writes.borrow().len(), 1);
+
+        // With the box empty, both go to the agent, whose double Escape opens rewind.
+        escape(&mut app);
+        escape(&mut app);
+        assert_eq!(*pty_writes.borrow(), vec![vec![C0::ESC]; 3]);
+    })
+}
+
+#[test]
+fn a_slash_command_in_the_one_box_goes_to_the_agent_command_menu() {
+    use crate::editor::EditorAction::{Backspace, Down, Enter, Tab, Up};
+
+    App::test((), |mut app| async move {
+        let _cli_rich = FeatureFlag::CLIAgentRichInput.override_enabled(true);
+        initialize_app_for_terminal_view(&mut app);
+        let (terminal, pty_writes) = one_box_claude_pane(&mut app, Vec::new());
+        let editor = terminal.read(&app, |view, ctx| view.input.as_ref(ctx).editor().clone());
+        let take_writes = || std::mem::take(&mut *pty_writes.borrow_mut());
+
+        // Each key is copied into the agent's composer, under the box, which stays open.
+        editor.update(&mut app, |editor, ctx| editor.user_insert("/", ctx));
+        editor.update(&mut app, |editor, ctx| editor.user_insert("e", ctx));
+        assert_eq!(take_writes(), vec![b"/".to_vec(), b"e".to_vec()]);
+        terminal.read(&app, |view, ctx| {
+            assert!(view.has_active_cli_agent_input_session(ctx));
+            assert!(view.has_one_box_command());
+        });
+
+        // The arrows, Tab and Enter work the agent's menu and leave the box's text alone.
+        assert_eq!(press_in_one_box(&mut app, &terminal, Down), "/e");
+        assert_eq!(press_in_one_box(&mut app, &terminal, Up), "/e");
+        assert_eq!(press_in_one_box(&mut app, &terminal, Tab), "/e");
+        assert_eq!(press_in_one_box(&mut app, &terminal, Enter), "/e");
+        assert_eq!(
+            take_writes(),
+            vec![
+                b"\x1b[B".to_vec(),
+                b"\x1b[A".to_vec(),
+                b"\t".to_vec(),
+                b"\r".to_vec()
+            ],
+            "Enter must not type the command into the agent's composer a second time"
+        );
+
+        // Deleting the slash deletes the copy; the box's text is a plain message again.
+        assert_eq!(press_in_one_box(&mut app, &terminal, Backspace), "/");
+        assert_eq!(take_writes(), vec![b"\x7f".to_vec()]);
+        editor.update(&mut app, |editor, ctx| {
+            editor.move_to_buffer_start(ctx);
+            editor.user_insert("a", ctx);
+        });
+        assert_eq!(take_writes(), vec![b"\x7f".to_vec()]);
+        terminal.read(&app, |view, ctx| {
+            assert!(!view.has_one_box_command());
+            assert_eq!(view.input.as_ref(ctx).buffer_text(ctx), "a/");
+        });
+    })
+}
+
+#[test]
+fn a_slash_command_typed_right_after_a_send_reaches_the_agent_once_the_send_lands() {
+    App::test((), |mut app| async move {
+        let _cli_rich = FeatureFlag::CLIAgentRichInput.override_enabled(true);
+        initialize_app_for_terminal_view(&mut app);
+        let (terminal, pty_writes) = one_box_claude_pane(&mut app, Vec::new());
+        let editor = terminal.read(&app, |view, ctx| view.input.as_ref(ctx).editor().clone());
+        // A message was just sent, so the agent's composer may still hold it.
+        terminal.update(&mut app, |view, ctx| view.start_one_box_send_grace(ctx));
+        editor.update(&mut app, |editor, ctx| editor.user_insert("/dif", ctx));
+        assert!(pty_writes.borrow().is_empty());
+        terminal.read(&app, |view, _| assert!(!view.has_one_box_command()));
+
+        // The message has landed and the composer reads empty: the command is copied without
+        // another key.
+        terminal.update(&mut app, |view, ctx| {
+            {
+                use crate::terminal::{SizeInfo, SizeUpdate, SizeUpdateReason};
+                let mut model = view.model.lock();
+                let last_size = *model.block_list().size();
+                let new_size = SizeInfo::new_without_font_metrics(24, 80);
+                model.resize(SizeUpdate {
+                    update_reason: SizeUpdateReason::Refresh,
+                    last_size,
+                    new_size,
+                    new_gap_height: None,
+                    natural_rows: new_size.rows(),
+                    natural_cols: new_size.columns(),
+                });
+                model.enter_alt_screen(true);
+                let rule = "─".repeat(80);
+                model.process_bytes(
+                    format!(
+                        "\x1b[0m\x1b[2J\x1b[3;1H{rule}\x1b[4;1H❯ \x1b[2mTry a prompt\x1b[0m\x1b[5;1H{rule}\x1b[4;3H"
+                    )
+                    .as_str(),
+                );
+            }
+            view.end_one_box_send_grace();
+            view.reconcile_one_box_input(ctx);
+        });
+        assert_eq!(*pty_writes.borrow(), vec![b"/dif".to_vec()]);
+        terminal.read(&app, |view, ctx| {
+            assert!(view.has_one_box_command());
+            assert_eq!(view.input.as_ref(ctx).buffer_text(ctx), "/dif");
+        });
+    })
+}
+
+#[test]
+fn escape_deletes_a_slash_command_from_the_box_and_the_agent_composer() {
+    App::test((), |mut app| async move {
+        let _cli_rich = FeatureFlag::CLIAgentRichInput.override_enabled(true);
+        initialize_app_for_terminal_view(&mut app);
+        let (terminal, pty_writes) = one_box_claude_pane(&mut app, Vec::new());
+        let editor = terminal.read(&app, |view, ctx| view.input.as_ref(ctx).editor().clone());
+        editor.update(&mut app, |editor, ctx| editor.user_insert("/mo", ctx));
+        pty_writes.borrow_mut().clear();
+
+        // Through the editor, as the keyboard does: Clinch's own slash commands must not take it.
+        press_in_one_box(&mut app, &terminal, crate::editor::EditorAction::Escape);
+
+        assert_eq!(*pty_writes.borrow(), vec![b"\x15".to_vec()]);
+        terminal.read(&app, |view, ctx| {
+            assert!(!view.has_one_box_command());
+            assert!(view.has_active_cli_agent_input_session(ctx));
+            assert_eq!(view.input.as_ref(ctx).buffer_text(ctx), "");
+        });
+    })
+}
+
+#[test]
+fn closing_the_one_box_takes_its_slash_command_out_of_the_agent_composer() {
+    App::test((), |mut app| async move {
+        let _cli_rich = FeatureFlag::CLIAgentRichInput.override_enabled(true);
+        initialize_app_for_terminal_view(&mut app);
+        let (terminal, pty_writes) = one_box_claude_pane(&mut app, Vec::new());
+        let editor = terminal.read(&app, |view, ctx| view.input.as_ref(ctx).editor().clone());
+        editor.update(&mut app, |editor, ctx| editor.user_insert("/mo", ctx));
+        pty_writes.borrow_mut().clear();
+
+        terminal.update(&mut app, |view, ctx| {
+            view.close_cli_agent_rich_input(CLIAgentRichInputCloseReason::Manual, ctx);
+        });
+
+        // The box keeps the command as its draft and copies it again when it reopens.
+        assert_eq!(*pty_writes.borrow(), vec![b"\x15".to_vec()]);
+        terminal.read(&app, |view, ctx| {
+            assert!(!view.has_one_box_command());
+            let draft = CLIAgentSessionsModel::as_ref(ctx)
+                .session(view.view_id)
+                .and_then(|session| session.draft_text.clone());
+            assert_eq!(draft.as_deref(), Some("/mo"));
+        });
+    })
+}
+
+#[test]
+fn one_box_escape_with_text_never_reaches_an_idle_agent() {
+    App::test((), |mut app| async move {
+        let _cli_rich = FeatureFlag::CLIAgentRichInput.override_enabled(true);
+        initialize_app_for_terminal_view(&mut app);
+        let (terminal, pty_writes) = one_box_claude_pane(&mut app, Vec::new());
+        terminal.update(&mut app, |view, ctx| {
+            // Hooks report the turn finished.
+            CLIAgentSessionsModel::handle(ctx).update(ctx, |sessions, ctx| {
+                let mut session = cli_agent_session_with_prompts(Vec::new());
+                session.agent = CLIAgent::Claude;
+                session.should_auto_toggle_input = true;
+                session.received_rich_notification = true;
+                session.has_observed_turn_activity = true;
+                session.status = CLIAgentSessionStatus::Success;
+                session.input_state = sessions
+                    .session(view.view_id)
+                    .map(|session| session.input_state)
+                    .expect("the box is open");
+                sessions.set_session(view.view_id, session, ctx);
+            });
+        });
+        terminal.update(&mut app, |view, ctx| {
+            view.input
+                .update(ctx, |input, ctx| input.replace_buffer_content("draft", ctx));
+        });
+        let escape = |app: &mut App| {
+            terminal.update(app, |view, ctx| {
+                assert!(view.forward_key_to_one_box_agent(OneBoxKey::Escape, ctx));
+                view.input.as_ref(ctx).buffer_text(ctx)
+            })
+        };
+
+        assert_eq!(escape(&mut app), "draft");
+        assert_eq!(escape(&mut app), "");
+        assert!(pty_writes.borrow().is_empty());
+    })
 }

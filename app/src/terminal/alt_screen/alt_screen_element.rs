@@ -8,7 +8,7 @@ use vec1::Vec1;
 use warp_core::features::FeatureFlag;
 use warp_util::user_input::UserInput;
 use warpui::elements::new_scrollable::{NewScrollableElement, ScrollableAxis};
-use warpui::elements::{Axis, Point as UiPoint, ScrollData, ScrollableElement};
+use warpui::elements::{Axis, Fill, Point as UiPoint, ScrollData, ScrollableElement};
 use warpui::event::{DispatchedEvent, InBoundsExt, KeyState, ModifiersState};
 use warpui::fonts::Properties;
 use warpui::geometry::rect::RectF;
@@ -42,6 +42,7 @@ use crate::terminal::model::mouse::{MouseAction, MouseButton, MouseState};
 use crate::terminal::model::selection::{SelectAction, SelectionPoint};
 use crate::terminal::model::terminal_model::WithinModel;
 use crate::terminal::model::SecretHandle;
+use crate::terminal::one_box_composer::{GridRows, OneBoxComposer};
 use crate::terminal::safe_mode_settings::get_secret_obfuscation_mode;
 use crate::terminal::shared_session::presence_manager::{
     text_selection_color, PresenceManager, MUTED_PARTICIPANT_COLOR,
@@ -86,6 +87,9 @@ pub struct AltScreenElement {
     cursor_hint_text: Option<Box<dyn Element>>,
 
     cli_subagent_view: Option<Box<dyn Element>>,
+
+    /// Covers the agent's empty composer so the rich input can take its place.
+    one_box_composer: Option<OneBoxComposer>,
 
     /// Voice input toggle key code for CLI agent footer integration.
     #[cfg_attr(not(feature = "voice_input"), allow(unused))]
@@ -179,6 +183,7 @@ impl AltScreenElement {
             max_scroll_top: None,
             cursor_hint_text,
             cli_subagent_view,
+            one_box_composer: None,
             voice_input_toggle_key_code: None,
         }
     }
@@ -195,6 +200,11 @@ impl AltScreenElement {
 
     pub fn with_hide_cursor_cell(mut self) -> Self {
         self.grid_render_params.hide_cursor_cell = true;
+        self
+    }
+
+    pub(crate) fn with_one_box_composer(mut self, one_box_composer: OneBoxComposer) -> Self {
+        self.one_box_composer = Some(one_box_composer);
         self
     }
 
@@ -843,6 +853,25 @@ impl Element for AltScreenElement {
             ctx,
             app,
         );
+
+        if let Some(one_box_composer) = &self.one_box_composer {
+            let bounds = self.bounds.expect("bounds set during paint.");
+            let background = sampler
+                .most_common()
+                .filter(|color| !color.is_fully_transparent())
+                .map(Fill::Solid)
+                .unwrap_or_else(|| self.grid_render_params.warp_theme.background().into());
+            one_box_composer.paint_cover(
+                grid,
+                GridRows {
+                    origin: adjusted_grid_origin,
+                    bounds,
+                    cell_height: cell_size.y(),
+                },
+                background,
+                ctx,
+            );
+        }
 
         if let Some(cli_subagent_view) = &mut self.cli_subagent_view {
             ctx.scene.start_layer(ClipBounds::ActiveLayer);
