@@ -4047,6 +4047,8 @@ fn reopening_an_open_cli_agent_conversation_focuses_it_without_launching_a_dupli
 
 #[test]
 fn test_tab_context_menu_explains_unavailable_and_omits_unsupported_session_ids() {
+    use crate::terminal::CLIAgent;
+
     let _vertical_tabs_guard = FeatureFlag::VerticalTabs.override_enabled(true);
 
     App::test((), |mut app| async move {
@@ -4061,17 +4063,28 @@ fn test_tab_context_menu_explains_unavailable_and_omits_unsupported_session_ids(
                 .id()
         });
 
-        for (agent, session_id) in [
-            (crate::terminal::CLIAgent::Claude, None),
-            (crate::terminal::CLIAgent::Codex, Some("   ")),
-            (crate::terminal::CLIAgent::Gemini, Some("gemini-session")),
+        const NOT_IDENTIFIED: &str = "The conversation has not been identified yet. Resume it using its session ID to reconnect this tab.";
+        const BEFORE_FIRST_CODEX_MESSAGE: &str =
+            "Codex shares its session ID when you send your first message.";
+        for (agent, session_id, observed_turn, expected_tooltip) in [
+            (CLIAgent::Claude, None, false, NOT_IDENTIFIED),
+            (CLIAgent::Claude, None, true, NOT_IDENTIFIED),
+            // Codex reports its ID with the first message, so a fresh Codex says so.
+            (
+                CLIAgent::Codex,
+                Some("   "),
+                false,
+                BEFORE_FIRST_CODEX_MESSAGE,
+            ),
+            // A Codex that has run a turn without reporting an ID is not attached to this tab.
+            (CLIAgent::Codex, None, true, NOT_IDENTIFIED),
+            // Gemini has no copy row, so it has no tooltip to check.
+            (CLIAgent::Gemini, Some("gemini-session"), false, ""),
         ] {
             CLIAgentSessionsModel::handle(&app).update(&mut app, |sessions, ctx| {
-                sessions.set_session(
-                    terminal_view_id,
-                    cli_agent_session_with_id(agent, session_id),
-                    ctx,
-                );
+                let mut session = cli_agent_session_with_id(agent, session_id);
+                session.has_observed_turn_activity = observed_turn;
+                sessions.set_session(terminal_view_id, session, ctx);
             });
 
             workspace.read(&app, |workspace, ctx| {
@@ -4088,12 +4101,13 @@ fn test_tab_context_menu_explains_unavailable_and_omits_unsupported_session_ids(
                     item.fields()
                         .filter(|fields| fields.label().ends_with(" session ID"))
                 });
-                if agent == crate::terminal::CLIAgent::Gemini {
+                if agent == CLIAgent::Gemini {
                     assert!(copy_session.is_none());
                 } else {
                     let item = copy_session.expect("both providers keep the same copy menu");
                     assert!(item.is_disabled());
                     assert!(item.on_select_action().is_none());
+                    assert_eq!(item.tooltip(), Some(expected_tooltip), "{agent:?}");
                 }
             });
         }
