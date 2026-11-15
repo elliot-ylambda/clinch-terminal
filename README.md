@@ -159,9 +159,9 @@ ignores a record more than 24 hours old. Turn this off with **Settings → Clinc
 sessions after a restart**.
 
 Every other session comes back asleep: its tab, title and conversation are there, and its agent
-does not start until you choose the tab, press **Wake** or a key in it, or something sends to it.
-An asleep tab shows a moon. This keeps a launch from starting dozens of agents you may not use;
-an idle Claude Code session holds about 700 MB.
+does not start until you press **Wake**, on its row in the tab list or on the card over the tab, or
+something sends to it. An asleep tab shows a moon. This keeps a launch from starting dozens of
+agents you may not use; an idle Claude Code session holds about 700 MB.
 
 ### Sleeping tabs
 
@@ -171,8 +171,11 @@ restart does, so the conversation picks up where it stopped.
 
 - Right-click a tab and choose **Sleep**, or **Sleep idle sessions** for the project or for every
   project.
-- Tabs you have not used for 2 hours sleep on their own. Change the time or turn this off with
-  **Settings → Clinch → Put idle sessions to sleep after**.
+- Wake one with the **Wake** button on its row, which leaves you where you are, or on the card
+  over the tab, which shows the agent and the tab's title. Going to an asleep tab doesn't wake it,
+  and it takes no typing until it's awake.
+- Tabs you have not used for a day (24 hours) sleep on their own. Change the time or turn this
+  off with **Settings → Clinch → Put idle sessions to sleep after**.
 - A session never sleeps while it is working, waiting on you, running a background shell, monitor
   or subagent, or holding a message you have not sent. The Coordinator and the tab on screen do
   not sleep on their own.

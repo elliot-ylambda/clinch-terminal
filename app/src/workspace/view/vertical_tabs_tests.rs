@@ -913,7 +913,7 @@ fn background_work_tooltip_spells_out_each_running_kind() {
 }
 
 #[test]
-fn an_asleep_row_says_since_when_and_how_to_wake_it() {
+fn an_asleep_row_says_since_when_without_promising_that_selecting_it_wakes_it() {
     use chrono::TimeZone as _;
 
     let now = chrono::Local
@@ -923,8 +923,5 @@ fn an_asleep_row_says_since_when_and_how_to_wake_it() {
         .with_ymd_and_hms(2026, 11, 13, 14, 14, 0)
         .unwrap()
         .with_timezone(&chrono::Utc);
-    assert_eq!(
-        super::asleep_tooltip(since, now),
-        "Asleep since 2:14 PM. Select it to wake it."
-    );
+    assert_eq!(super::asleep_tooltip(since, now), "Asleep since 2:14 PM");
 }

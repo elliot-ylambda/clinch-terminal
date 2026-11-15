@@ -77,10 +77,12 @@ define_settings_group!(ClinchSettings, settings: [
     },
     // An idle Claude Code tab holds about 700 MB, and a Codex tab keeps its helper processes too,
     // so dozens of forgotten tabs can fill memory. A tab asleep has no agent process and wakes on
-    // its saved conversation. Zero turns automatic sleep off; the tab menu still sleeps by hand.
+    // its saved conversation. A day is long enough that a tab left over lunch or a meeting is still
+    // awake when you come back to it. Zero turns automatic sleep off; the tab menu still sleeps by
+    // hand.
     sleep_idle_agent_tabs_after_hours: ClinchSleepIdleAgentTabsAfterHours {
         type: u32,
-        default: 2,
+        default: 24,
         supported_platforms: SupportedPlatforms::DESKTOP,
         sync_to_cloud: SyncToCloud::Never,
         private: false,

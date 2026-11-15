@@ -281,13 +281,20 @@ fn sleep_keeps_the_conversation_and_waking_resumes_it() {
         });
         assert_eq!(starts.get(), 0, "an asleep pane on screen stays asleep");
 
-        // A key typed into it wakes it, and is not mistaken for the user taking the pane over.
+        // A key typed into it is dropped and does not wake it: the user can't see what it would go
+        // into. Only its Wake button wakes it.
+        terminal.update(&mut app, |view, _| {
+            view.mark_user_input_for_test();
+            assert!(view.agent_sleep_saw_typing(), "the key is dropped");
+            assert!(view.agent_is_asleep(), "typing does not wake it");
+        });
+        assert_eq!(starts.get(), 0, "typing starts nothing");
         terminal.update(&mut app, |view, ctx| {
+            assert!(view.wake_agent(ctx), "the Wake button wakes it");
+            // Keys while it comes up are dropped too, start nothing more, and are not mistaken
+            // for the user taking the pane over from the resume command.
             view.mark_user_input_for_test();
-            assert!(view.agent_sleep_saw_typing(ctx));
-            // More keys while it comes up are dropped too, and start nothing more.
-            view.mark_user_input_for_test();
-            assert!(view.agent_sleep_saw_typing(ctx));
+            assert!(view.agent_sleep_saw_typing());
             assert!(!view.agent_restore_has_user_input());
             assert_eq!(
                 view.agent_sleep().map(|sleep| sleep.phase.clone()),
@@ -425,9 +432,13 @@ fn the_card_says_what_is_happening_in_plain_words() {
             now,
         )
     };
-    let (title, body) = card(AgentSleepPhase::Asleep);
-    assert_eq!(title, "This session is asleep");
-    assert!(body.starts_with("Asleep since 2:14 PM."), "{body}");
+    let (status, body) = card(AgentSleepPhase::Asleep);
+    assert_eq!(status, "Asleep since 2:14 PM");
+    assert!(body.starts_with("Nothing is lost"), "{body}");
+    assert!(
+        !body.contains("typing"),
+        "an asleep pane takes no typing: {body}"
+    );
     assert_eq!(card(AgentSleepPhase::Waking).0, "Waking up…");
     assert_eq!(
         card(AgentSleepPhase::Stopping {
@@ -436,6 +447,55 @@ fn the_card_says_what_is_happening_in_plain_words() {
         .0,
         "Going to sleep…"
     );
+}
+
+/// The card says whose session it is, the way its row in the tab list does: the agent's logo and
+/// the row's title, so the user can tell which conversation they would be waking. Clinch's session
+/// titles need the Clinch app ID; nextest runs each test in its own process, so it can't leak.
+#[test]
+fn the_card_names_the_agent_and_the_tab_it_would_wake() {
+    warp_core::channel::ChannelState::set(warp_core::channel::ChannelState::new(
+        warp_core::channel::Channel::Local,
+        warp_core::channel::ChannelConfig::no_backend(
+            warp_core::AppId::new("sh", "clinch", "ClinchDev"),
+            "clinch-test.log",
+        ),
+    ));
+    App::test((), |mut app| async move {
+        initialize_app_for_terminal_view(&mut app);
+        let terminal = add_window_with_terminal(&mut app, None);
+        for agent in [CLIAgent::Claude, CLIAgent::Codex] {
+            terminal.update(&mut app, |view, ctx| {
+                let mut session = idle_test_session(agent);
+                session.prompt_history.prompts.push(AgentPrompt {
+                    timestamp: None,
+                    text: "Fix the flaky test".into(),
+                });
+                CLIAgentSessionsModel::handle(ctx).update(ctx, |sessions, ctx| {
+                    sessions.set_session(view.view_id, session, ctx);
+                });
+                view.pane_configuration.update(ctx, |configuration, ctx| {
+                    configuration.clear_custom_vertical_tabs_title(ctx);
+                });
+            });
+            terminal.read(&app, |view, ctx| {
+                let (logo, title) = view.sleep_card_heading(ctx);
+                assert_eq!(logo, Some(agent));
+                assert_eq!(title, terminal_row_title(view, ctx), "the row's own words");
+                assert_eq!(title, "Fix the flaky test", "{agent:?}");
+            });
+
+            // A name the user gave the row wins, as it does in the tab list.
+            terminal.update(&mut app, |view, ctx| {
+                view.pane_configuration.update(ctx, |configuration, ctx| {
+                    configuration.set_custom_vertical_tabs_title("Release notes", ctx);
+                });
+            });
+            terminal.read(&app, |view, ctx| {
+                assert_eq!(view.sleep_card_heading(ctx).1, "Release notes");
+            });
+        }
+    });
 }
 
 #[test]

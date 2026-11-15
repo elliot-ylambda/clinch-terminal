@@ -612,6 +612,9 @@ pub enum WorkspaceAction {
     SleepTab(usize),
     /// Start this asleep tab's agents again on their saved conversations.
     WakeTab(usize),
+    /// Start one asleep pane's agent again, from the Wake button on its row in the tab list. The
+    /// tab is not selected: waking a session is not the same as going to it.
+    WakePane(PaneViewLocator),
     /// Put every idle agent tab to sleep, in this project or in every project.
     SleepIdleTabs {
         every_project: bool,
@@ -1231,6 +1234,7 @@ impl WorkspaceAction {
             | RetryStalledRestores
             | SleepTab(_)
             | WakeTab(_)
+            | WakePane(_)
             | SleepIdleTabs { .. }
             | FocusPane(..)
             | ShiftSelectTabRange { .. }

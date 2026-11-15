@@ -2,12 +2,12 @@
 //!
 //! A pane knows whether its own agent may be stopped (`terminal/view/agent_sleep.rs`). This file
 //! adds what only the project knows: which tab is the Coordinator, which one the user is looking
-//! at, and how long each has sat idle. It also decides what counts as the user choosing a tab,
-//! which wakes it, as opposed to a tab merely ending up on screen, which does not.
+//! at, and how long each has sat idle. Going to an asleep tab does not wake it: a tab is easy to
+//! land on by accident. It wakes from a Wake button, on its card or its row, or its tab menu.
 use std::time::Duration;
 
 use warpui::r#async::Timer;
-use warpui::{AppContext, EntityId, SingletonEntity, ViewContext, ViewHandle};
+use warpui::{AppContext, SingletonEntity, ViewContext, ViewHandle};
 
 use super::Workspace;
 use crate::pane_group::PaneGroup;
@@ -15,13 +15,10 @@ use crate::settings::ClinchSettings;
 use crate::terminal::view::agent_sleep::SleepBlocker;
 use crate::terminal::TerminalView;
 use crate::view_components::DismissibleToast;
-use crate::workspace::WorkspaceRegistry;
+use crate::workspace::{PaneViewLocator, WorkspaceRegistry};
 
 /// How often each project looks for agent tabs that have been idle long enough to sleep.
 const IDLE_CHECK_INTERVAL: Duration = Duration::from_secs(60);
-/// How long a chosen tab must stay chosen before it wakes. Stepping past a row of asleep tabs
-/// with the keyboard then wakes only the one the user stops on.
-const SELECT_WAKE_DWELL: Duration = Duration::from_millis(700);
 
 /// What asking some tabs to sleep came to.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -196,9 +193,9 @@ impl Workspace {
         wake_agents(&group, ctx)
     }
 
-    /// Brings a tab forward for the control CLI, as the activate-tab action does, without it
-    /// counting as the user choosing that tab. A coordinator that wants an agent running says
-    /// so, with `agent wake` or by sending to it.
+    /// Brings a tab forward for the control CLI, as the activate-tab action does. Like going to a
+    /// tab in the app, it leaves an asleep tab asleep. A coordinator that wants an agent running
+    /// says so, with `agent wake` or by sending to it.
     pub(crate) fn activate_tab_without_waking(
         &mut self,
         index: usize,
@@ -208,43 +205,26 @@ impl Workspace {
         ctx.dispatch_global_action("workspace:save_app", ());
     }
 
-    /// The user chose the tab that is now on screen: by clicking it, or with a tab shortcut. If
-    /// it is asleep it wakes once the choice has held for a moment.
-    pub(super) fn wake_chosen_tab_soon(&mut self, ctx: &mut ViewContext<Self>) {
-        let Some(group) = self
-            .tabs
-            .get(self.active_tab_index)
-            .map(|tab| tab.pane_group.clone())
-        else {
-            return;
-        };
-        if group.as_ref(ctx).asleep_agent_panes(ctx).is_empty() {
-            return;
-        }
-        let chosen = group.id();
-        ctx.spawn(Timer::after(SELECT_WAKE_DWELL), move |me, _, ctx| {
-            me.wake_tab_if_still_chosen(chosen, ctx);
-        });
-    }
-
-    /// Wakes the tab the user chose, unless they have moved on since. Returns how many agents it
-    /// started.
-    pub(crate) fn wake_tab_if_still_chosen(
+    /// Wakes one asleep pane, from the Wake button on its row. The pane's tab is not selected.
+    /// Returns whether it started an agent.
+    pub(crate) fn wake_pane(
         &mut self,
-        chosen: EntityId,
+        locator: PaneViewLocator,
         ctx: &mut ViewContext<Self>,
-    ) -> usize {
-        let index = self.active_tab_index;
-        let still_chosen = self
+    ) -> bool {
+        let Some(terminal) = self
             .tabs
-            .get(index)
-            .is_some_and(|tab| tab.pane_group.id() == chosen)
-            && self.is_tab_on_screen(index, ctx);
-        if still_chosen {
-            self.wake_tab(index, ctx)
-        } else {
-            0
-        }
+            .iter()
+            .find(|tab| tab.pane_group.id() == locator.pane_group_id)
+            .and_then(|tab| {
+                tab.pane_group
+                    .as_ref(ctx)
+                    .terminal_view_from_pane_id(locator.pane_id, ctx)
+            })
+        else {
+            return false;
+        };
+        terminal.update(ctx, |view, ctx| view.wake_agent(ctx))
     }
 
     /// Starts the once-a-minute look for tabs that have been idle long enough to sleep.

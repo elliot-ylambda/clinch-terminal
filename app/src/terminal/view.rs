@@ -23171,12 +23171,13 @@ impl TerminalView {
                     self.touch_agent_activity();
                     // Only a pane with keyboard focus is being typed into. The input of a pane
                     // nobody is in can change too, when a saved draft is put back at launch, and
-                    // that must not wake it.
+                    // that must be left alone.
                     if ctx.is_self_or_child_focused()
-                        && self.agent_sleep_saw_typing(ctx)
+                        && self.agent_sleep_saw_typing()
                         && !self.input.as_ref(ctx).buffer_text(ctx).is_empty()
                     {
-                        // The key woke the pane. It was never meant for the shell underneath.
+                        // An asleep or waking pane takes no typing, and the shell underneath
+                        // must not get it either: the resume command is typed there on waking.
                         self.input.update(ctx, |input, ctx| {
                             input.clear_buffer_and_reset_undo_stack(ctx);
                         });
@@ -28979,8 +28980,12 @@ impl View for TerminalView {
     }
 
     fn render(&self, app: &AppContext) -> Box<dyn Element> {
-        // Grab this here, before we take the terminal model lock.
+        // Grab these here, before we take the terminal model lock: both read the model.
         let menu_positioning = self.input.as_ref(app).menu_positioning(app);
+        let agent_sleep_heading = self
+            .agent_sleep
+            .is_some()
+            .then(|| self.sleep_card_heading(app));
 
         let appearance = Appearance::as_ref(app);
         let semantic_selection = SemanticSelection::as_ref(app);
@@ -29523,7 +29528,9 @@ impl View for TerminalView {
         if let Some(dim) = self.render_agent_sleep_dim(app) {
             stack.add_child(dim);
         }
-        if let Some(card) = self.render_agent_sleep_card(app) {
+        if let Some(card) =
+            agent_sleep_heading.and_then(|heading| self.render_agent_sleep_card(heading, app))
+        {
             stack.add_positioned_child(
                 card,
                 OffsetPositioning::offset_from_parent(

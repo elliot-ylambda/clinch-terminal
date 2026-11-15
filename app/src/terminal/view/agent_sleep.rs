@@ -16,8 +16,8 @@ use warp_core::ui::theme::Fill;
 use warp_core::ui::tokens::{corners_lg, corners_md};
 use warp_core::ui::Icon;
 use warpui::elements::{
-    Border, ConstrainedBox, Container, CrossAxisAlignment, Flex, Hoverable, MainAxisAlignment,
-    MainAxisSize, ParentElement as _, Rect, Text,
+    Border, ConstrainedBox, Container, CrossAxisAlignment, Expanded, Flex, Hoverable,
+    MainAxisAlignment, MainAxisSize, ParentElement as _, Rect, Text,
 };
 use warpui::fonts::{Properties, Weight};
 use warpui::platform::Cursor;
@@ -29,6 +29,8 @@ use super::{Event, TerminalAction, TerminalView};
 use crate::terminal::cli_agent_sessions::restore::AgentRestoreQueue;
 use crate::terminal::cli_agent_sessions::{CLIAgentSessionStatus, CLIAgentSessionsModel};
 use crate::terminal::CLIAgent;
+use crate::ui_components::icon_with_status::{render_icon_with_status, IconWithStatusVariant};
+use crate::workspace::view::vertical_tabs::terminal_row_title;
 
 /// How long a stopped agent gets to exit before the sleep is called off and it is left running.
 const STOP_TIMEOUT: Duration = Duration::from_secs(20);
@@ -46,7 +48,8 @@ const CARD_WIDTH: f32 = 300.;
 const CARD_PADDING: f32 = 14.;
 const CARD_TITLE_SIZE: f32 = 13.;
 const CARD_BODY_SIZE: f32 = 12.;
-const CARD_ICON_SIZE: f32 = 14.;
+const CARD_ICON_SIZE: f32 = 12.;
+const CARD_LOGO_SIZE: f32 = 20.;
 /// How much of the scrim color dims the pane behind the card, as a percentage.
 const PANE_DIM_OPACITY: u8 = 45;
 
@@ -156,7 +159,8 @@ pub(crate) fn asleep_since_label(since: DateTime<Utc>, now: DateTime<Local>) -> 
     }
 }
 
-/// What the card over the pane says for each phase: its title and the line under it.
+/// What the card over the pane says for each phase, under the session's logo and title: a short
+/// status beside the moon, and the line under it.
 pub(crate) fn sleep_card_copy(sleep: &AgentSleep, now: DateTime<Local>) -> (String, String) {
     match sleep.phase {
         AgentSleepPhase::Stopping { .. } => (
@@ -164,12 +168,8 @@ pub(crate) fn sleep_card_copy(sleep: &AgentSleep, now: DateTime<Local>) -> (Stri
             "Stopping the agent. The conversation is saved.".to_owned(),
         ),
         AgentSleepPhase::Asleep => (
-            "This session is asleep".to_owned(),
-            format!(
-                "Asleep since {}. Nothing is lost: waking it picks the conversation up where it \
-                 stopped.",
-                asleep_since_label(sleep.since, now)
-            ),
+            format!("Asleep since {}", asleep_since_label(sleep.since, now)),
+            "Nothing is lost: waking it picks the conversation up where it stopped.".to_owned(),
         ),
         AgentSleepPhase::Waking => (
             "Waking up…".to_owned(),
@@ -239,7 +239,7 @@ impl TerminalView {
             since,
             phase: AgentSleepPhase::Asleep,
         });
-        // Its tab, a message or the Wake button starts it now, rather than the restore queue.
+        // Its tab menu, a message or a Wake button starts it now, rather than the restore queue.
         self.background_agent_restore = false;
         self.agent_sleep_generation = self.agent_sleep_generation.wrapping_add(1);
         ctx.notify();
@@ -469,8 +469,8 @@ impl TerminalView {
             phase: AgentSleepPhase::Waking,
         });
         self.agent_sleep_generation = self.agent_sleep_generation.wrapping_add(1);
-        // Whatever was typed before this, including the keystroke that woke the pane, is not the
-        // user taking the pane over from the resume command.
+        // Whatever was typed before this is not the user taking the pane over from the resume
+        // command.
         self.agent_restore_input_baseline = self.coordination_user_input_epoch;
         self.agent_session_started_at = Some(Instant::now());
         self.touch_agent_activity();
@@ -498,12 +498,13 @@ impl TerminalView {
         }
     }
 
-    /// The user typed in this pane. Typing in an asleep pane wakes it instead of reaching the
-    /// shell under it, and keys typed while it comes up belong to that same request. Returns
-    /// whether the typed text should be dropped rather than left in the shell's input.
-    pub(super) fn agent_sleep_saw_typing(&mut self, ctx: &mut ViewContext<Self>) -> bool {
+    /// The user typed in this pane. An asleep pane takes no typing: the agent isn't there to read
+    /// it, and the user can't see what it would go into. Only its Wake button wakes it. Keys typed
+    /// while it comes up are dropped too, so none reach the shell under it. Returns whether the
+    /// typed text should be dropped rather than left in the shell's input.
+    pub(super) fn agent_sleep_saw_typing(&mut self) -> bool {
         match self.agent_sleep.as_ref().map(|sleep| &sleep.phase) {
-            Some(AgentSleepPhase::Asleep) => self.wake_agent(ctx),
+            Some(AgentSleepPhase::Asleep) => true,
             Some(AgentSleepPhase::Waking) => {
                 // Not the user taking the pane over from the resume command.
                 self.agent_restore_input_baseline = self.coordination_user_input_epoch;
@@ -511,6 +512,29 @@ impl TerminalView {
             }
             _ => false,
         }
+    }
+
+    /// Whose card it is: the agent, for its logo, and the title its row in the tab list shows, so
+    /// the user can tell which conversation they would be waking. This locks the terminal model, so
+    /// `render` reads it before taking that lock.
+    pub(crate) fn sleep_card_heading(&self, app: &AppContext) -> (Option<CLIAgent>, String) {
+        let agent = CLIAgentSessionsModel::as_ref(app)
+            .session(self.view_id)
+            .map(|session| session.agent);
+        // A name the user gave the row wins, as it does in the tab list.
+        let title = self
+            .pane_configuration
+            .as_ref(app)
+            .custom_vertical_tabs_title()
+            .map(str::to_owned)
+            .unwrap_or_else(|| terminal_row_title(self, app));
+        let title = title.trim();
+        let title = if title.is_empty() {
+            agent.map_or("Agent session", |agent| agent.display_name())
+        } else {
+            title
+        };
+        (agent, title.to_owned())
     }
 
     /// A translucent layer that dims an asleep pane, so it reads as off at a glance.
@@ -524,17 +548,53 @@ impl TerminalView {
         )
     }
 
-    /// The card over an asleep pane: that it is asleep, since when, and how to wake it.
-    pub(super) fn render_agent_sleep_card(&self, app: &AppContext) -> Option<Box<dyn Element>> {
+    /// The card over an asleep pane: whose session it is, that it is asleep and since when, and a
+    /// Wake button. The pane under it takes no typing. `heading` is [`Self::sleep_card_heading`],
+    /// read before `render` locks the terminal model, since finding the row's title reads it too.
+    pub(super) fn render_agent_sleep_card(
+        &self,
+        (agent, heading): (Option<CLIAgent>, String),
+        app: &AppContext,
+    ) -> Option<Box<dyn Element>> {
         let sleep = self.agent_sleep.as_ref()?;
         let appearance = Appearance::as_ref(app);
+        let theme = appearance.theme();
         let tokens = *appearance.tokens();
         let font_family = appearance.ui_font_family();
-        let (title, body) = sleep_card_copy(sleep, Local::now());
+        let (status, body) = sleep_card_copy(sleep, Local::now());
 
-        let header = Flex::row()
+        let heading_row = Flex::row()
+            .with_cross_axis_alignment(CrossAxisAlignment::Start)
+            .with_spacing(10.)
+            .with_children(agent.map(|agent| {
+                render_icon_with_status(
+                    IconWithStatusVariant::CLIAgent {
+                        agent,
+                        status: None,
+                        is_ambient: false,
+                    },
+                    CARD_LOGO_SIZE,
+                    0.,
+                    theme,
+                    theme.background(),
+                )
+            }))
+            .with_child(
+                Expanded::new(
+                    1.,
+                    Text::new(heading, font_family, CARD_TITLE_SIZE)
+                        .soft_wrap(true)
+                        .with_style(Properties::default().weight(Weight::Medium))
+                        .with_color(tokens.text_1)
+                        .finish(),
+                )
+                .finish(),
+            )
+            .finish();
+
+        let status_row = Flex::row()
             .with_cross_axis_alignment(CrossAxisAlignment::Center)
-            .with_spacing(8.)
+            .with_spacing(6.)
             .with_child(
                 ConstrainedBox::new(
                     Icon::Moon
@@ -546,9 +606,9 @@ impl TerminalView {
                 .finish(),
             )
             .with_child(
-                Text::new_inline(title, font_family, CARD_TITLE_SIZE)
+                Text::new_inline(status, font_family, CARD_BODY_SIZE)
                     .with_style(Properties::default().weight(Weight::Medium))
-                    .with_color(tokens.text_1)
+                    .with_color(tokens.text_2)
                     .finish(),
             )
             .finish();
@@ -557,11 +617,12 @@ impl TerminalView {
             .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
             .with_main_axis_size(MainAxisSize::Min)
             .with_spacing(8.)
-            .with_child(header)
+            .with_child(heading_row)
+            .with_child(status_row)
             .with_child(
                 Text::new(body, font_family, CARD_BODY_SIZE)
                     .soft_wrap(true)
-                    .with_color(tokens.text_2)
+                    .with_color(tokens.text_3)
                     .finish(),
             );
 
@@ -585,14 +646,8 @@ impl TerminalView {
             column.add_child(
                 Container::new(
                     Flex::row()
-                        .with_cross_axis_alignment(CrossAxisAlignment::Center)
-                        .with_main_axis_alignment(MainAxisAlignment::SpaceBetween)
+                        .with_main_axis_alignment(MainAxisAlignment::End)
                         .with_main_axis_size(MainAxisSize::Max)
-                        .with_child(
-                            Text::new_inline("or just start typing", font_family, CARD_BODY_SIZE)
-                                .with_color(tokens.text_3)
-                                .finish(),
-                        )
                         .with_child(wake)
                         .finish(),
                 )
