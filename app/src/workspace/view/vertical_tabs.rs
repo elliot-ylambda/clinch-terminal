@@ -160,6 +160,7 @@ const SPINNER_FRAME_INTERVAL: std::time::Duration = std::time::Duration::from_mi
 const ROW_LINEAGE_INDENT: f32 = 14.;
 const ROW_MARK_GAP: f32 = 10.;
 const ROW_TITLE_SIZE: f32 = 13.;
+const ROW_WAKE_BUTTON_SIZE: f32 = 11.;
 /// 32px tall with one 13px line.
 const ROW_VERTICAL_PADDING: f32 = 7.;
 const ROW_HORIZONTAL_PADDING: f32 = 10.;
@@ -697,6 +698,7 @@ struct PaneRowBadgeMouseStates {
     pull_request: MouseStateHandle,
     background_work: MouseStateHandle,
     asleep: MouseStateHandle,
+    wake: MouseStateHandle,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -3920,12 +3922,40 @@ fn terminal_asleep_since(
         .agent_asleep_since()
 }
 
-/// What hovering an asleep row's moon says.
+/// What hovering an asleep row's moon says. Selecting the tab doesn't wake it; its Wake button does.
 fn asleep_tooltip(since: chrono::DateTime<chrono::Utc>, now: chrono::DateTime<Local>) -> String {
-    format!(
-        "Asleep since {}. Select it to wake it.",
-        asleep_since_label(since, now)
-    )
+    format!("Asleep since {}", asleep_since_label(since, now))
+}
+
+/// The Wake button at the end of an asleep row. It wakes that session where it is, without going
+/// to its tab, so several can be woken from the list.
+fn render_row_wake_button(
+    locator: PaneViewLocator,
+    mouse_state: MouseStateHandle,
+    appearance: &Appearance,
+) -> Box<dyn Element> {
+    let tokens = *appearance.tokens();
+    let font_family = appearance.ui_font_family();
+    Hoverable::new(mouse_state, move |state| {
+        let (background, text) = if state.is_hovered() {
+            (tokens.surface_hover, tokens.text_1)
+        } else {
+            (tokens.surface_field, tokens.text_2)
+        };
+        Container::new(
+            Text::new_inline("Wake", font_family, ROW_WAKE_BUTTON_SIZE)
+                .with_color(text)
+                .finish(),
+        )
+        .with_horizontal_padding(6.)
+        .with_vertical_padding(1.)
+        .with_background(ThemeFill::Solid(background))
+        .with_corner_radius(corners_sm())
+        .finish()
+    })
+    .with_cursor(Cursor::PointingHand)
+    .on_click(move |ctx, _, _| ctx.dispatch_typed_action(WorkspaceAction::WakePane(locator)))
+    .finish()
 }
 
 fn is_restoring(state: Option<RestoreState>) -> bool {
@@ -4268,6 +4298,16 @@ fn render_pane_row(props: PaneProps<'_>, app: &AppContext) -> Box<dyn Element> {
             ),
             _ => None,
         })
+        .with_children(is_asleep.then(|| {
+            render_row_wake_button(
+                PaneViewLocator {
+                    pane_group_id: props.pane_group_id,
+                    pane_id: props.pane_id,
+                },
+                props.badge_mouse_states.wake.clone(),
+                appearance,
+            )
+        }))
         .with_children(
             (props.is_coordinator
                 && props.is_pinned
@@ -5365,6 +5405,26 @@ fn render_terminal_primary_line_for_view(
     text_color: WarpThemeFill,
     app: &AppContext,
 ) -> Box<dyn Element> {
+    render_terminal_primary_line(
+        terminal_primary_line_data_for_view(terminal_view, app),
+        terminal_view,
+        appearance,
+        text_color,
+    )
+}
+
+/// What a terminal pane's row says as its title when nobody has renamed it. The card over an
+/// asleep pane shows the same words, so the user knows which row's conversation they would wake.
+pub(crate) fn terminal_row_title(terminal_view: &TerminalView, app: &AppContext) -> String {
+    terminal_primary_line_data_for_view(terminal_view, app)
+        .text()
+        .to_owned()
+}
+
+fn terminal_primary_line_data_for_view(
+    terminal_view: &TerminalView,
+    app: &AppContext,
+) -> TerminalPrimaryLineData {
     let title_text = terminal_view
         .agent_title_without_status(app)
         .unwrap_or_else(|| terminal_view.display_title_from_shell(app));
@@ -5374,19 +5434,14 @@ fn render_terminal_primary_line_for_view(
     let (conversation_display_title, cli_agent_title) =
         preferred_agent_tab_titles(&agent_text, agent_tab_text_preference(app));
 
-    render_terminal_primary_line(
-        terminal_primary_line_data(
-            terminal_view.is_long_running_and_user_controlled(),
-            conversation_display_title,
-            cli_agent_title,
-            title_text.as_str(),
-            working_directory.as_str(),
-            terminal_title_fallback_font(&agent_text),
-            terminal_view.last_completed_command_text(),
-        ),
-        terminal_view,
-        appearance,
-        text_color,
+    terminal_primary_line_data(
+        terminal_view.is_long_running_and_user_controlled(),
+        conversation_display_title,
+        cli_agent_title,
+        title_text.as_str(),
+        working_directory.as_str(),
+        terminal_title_fallback_font(&agent_text),
+        terminal_view.last_completed_command_text(),
     )
 }
 

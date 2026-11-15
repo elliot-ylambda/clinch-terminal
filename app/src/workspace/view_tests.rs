@@ -769,8 +769,11 @@ fn add_asleep_agent_tab(
     (group, terminal)
 }
 
+/// Going to an asleep tab leaves it asleep: a tab is easy to land on by accident. Its row's Wake
+/// button wakes that one session where it is, without going to its tab, so several can be woken
+/// from the list.
 #[test]
-fn choosing_an_asleep_tab_wakes_it_once_in_place_and_leaves_the_others_asleep() {
+fn going_to_an_asleep_tab_leaves_it_asleep_and_its_row_wake_button_wakes_it_in_place() {
     use std::cell::Cell;
     use std::rc::Rc;
 
@@ -780,58 +783,80 @@ fn choosing_an_asleep_tab_wakes_it_once_in_place_and_leaves_the_others_asleep() 
         let starts = Rc::new(Cell::new(0));
         let sibling_starts = Rc::new(Cell::new(0));
 
-        workspace.update(&mut app, |workspace, ctx| {
+        let (group, terminal, sibling) = workspace.update(&mut app, |workspace, ctx| {
             let window_id = ctx.window_id();
             WindowManager::handle(ctx).update(ctx, |state, _| {
                 state.overwrite_for_test(ApplicationStage::Active, Some(window_id));
             });
             let (group, terminal) = add_asleep_agent_tab(workspace, &starts, ctx);
             let (sibling, _) = add_asleep_agent_tab(workspace, &sibling_starts, ctx);
-            let tab_ids: Vec<_> = workspace
+            (group, terminal, sibling)
+        });
+        let index_of = |workspace: &Workspace, id| {
+            workspace
                 .tabs
                 .iter()
-                .map(|tab| tab.pane_group.id())
-                .collect();
-            let index = tab_ids.iter().position(|id| *id == group.id()).unwrap();
-            let sibling_index = tab_ids.iter().position(|id| *id == sibling.id()).unwrap();
+                .position(|tab| tab.pane_group.id() == id)
+                .unwrap()
+        };
 
-            // The user steps past the sibling and stops on the tab they want. A tab only passed
-            // over is no longer the chosen one by the time its moment is up.
+        // Every way of going to a tab, including clicking its row.
+        workspace.update(&mut app, |workspace, ctx| {
+            let index = index_of(workspace, group.id());
+            let sibling_index = index_of(workspace, sibling.id());
             workspace.handle_action(&WorkspaceAction::ActivateTab(sibling_index), ctx);
             workspace.handle_action(&WorkspaceAction::ActivateTab(index), ctx);
-            assert_eq!(workspace.wake_tab_if_still_chosen(sibling.id(), ctx), 0);
-            assert_eq!(sibling_starts.get(), 0, "a tab passed over stays asleep");
-
-            assert_eq!(workspace.wake_tab_if_still_chosen(group.id(), ctx), 1);
-            assert_eq!(starts.get(), 1, "choosing the tab wakes it");
-            assert_eq!(workspace.wake_tab_if_still_chosen(group.id(), ctx), 0);
-            workspace.handle_action(&WorkspaceAction::ActivateTab(index), ctx);
-            assert_eq!(workspace.wake_tab_if_still_chosen(group.id(), ctx), 0);
-            assert_eq!(
-                starts.get(),
-                1,
-                "choosing it again must not start a second agent"
-            );
-            assert_eq!(
-                workspace
-                    .tabs
-                    .iter()
-                    .map(|tab| tab.pane_group.id())
-                    .collect::<Vec<_>>(),
-                tab_ids,
-                "waking must preserve the existing tabs"
-            );
-            assert_eq!(
-                workspace
-                    .active_tab_pane_group()
-                    .as_ref(ctx)
-                    .active_session_view(ctx)
-                    .unwrap()
-                    .id(),
-                terminal.id(),
-                "waking must preserve the existing pane"
+            workspace.handle_action(&WorkspaceAction::ActivatePrevTab, ctx);
+            workspace.handle_action(&WorkspaceAction::ActivateNextTab, ctx);
+            let pane_id = group.as_ref(ctx).focused_pane_id(ctx);
+            workspace.handle_action(
+                &WorkspaceAction::FocusPane(PaneViewLocator {
+                    pane_group_id: group.id(),
+                    pane_id,
+                }),
+                ctx,
             );
         });
+        // Longer than the 700 ms a wake on selection used to wait.
+        warpui::r#async::Timer::after(std::time::Duration::from_secs(1)).await;
+        assert_eq!(starts.get(), 0, "going to a tab leaves it asleep");
+        assert_eq!(sibling_starts.get(), 0, "a tab passed over stays asleep");
+        terminal.read(&app, |view, _| assert!(view.agent_is_asleep()));
+
+        // The sibling's row Wake button, pressed while another tab is on screen.
+        workspace.update(&mut app, |workspace, ctx| {
+            let index = index_of(workspace, group.id());
+            workspace.handle_action(&WorkspaceAction::ActivateTab(index), ctx);
+            let sibling_pane = sibling.as_ref(ctx).focused_pane_id(ctx);
+            workspace.handle_action(
+                &WorkspaceAction::WakePane(PaneViewLocator {
+                    pane_group_id: sibling.id(),
+                    pane_id: sibling_pane,
+                }),
+                ctx,
+            );
+            assert_eq!(sibling_starts.get(), 1, "the row's Wake button wakes it");
+            assert_eq!(
+                workspace.active_tab_index, index,
+                "waking a row must not go to its tab"
+            );
+            assert!(
+                !workspace.wake_pane(
+                    PaneViewLocator {
+                        pane_group_id: sibling.id(),
+                        pane_id: sibling_pane,
+                    },
+                    ctx,
+                ),
+                "a second press starts nothing more"
+            );
+        });
+        assert_eq!(sibling_starts.get(), 1);
+        assert_eq!(
+            starts.get(),
+            0,
+            "waking one session leaves the others asleep"
+        );
     });
 }
 

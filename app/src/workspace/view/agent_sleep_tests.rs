@@ -3,11 +3,13 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use settings::Setting as _;
 use warpui::windowing::state::ApplicationStage;
 use warpui::windowing::WindowManager;
 use warpui::App;
 
 use super::*;
+use crate::settings::ClinchSleepIdleAgentTabsAfterHours;
 use crate::terminal::cli_agent_sessions::tests::idle_test_session;
 use crate::terminal::cli_agent_sessions::{CLIAgentSessionStatus, CLIAgentSessionsModel};
 use crate::terminal::CLIAgent;
@@ -118,6 +120,9 @@ fn the_coordinator_and_the_tab_on_screen_never_sleep_on_their_own() {
 
 #[test]
 fn automatic_sleep_waits_for_the_idle_time_and_restarts_it_for_a_session_in_use() {
+    let default_threshold =
+        idle_sleep_threshold(ClinchSleepIdleAgentTabsAfterHours::default_value()).unwrap();
+    let long_idle = default_threshold + Duration::from_secs(60 * 60);
     App::test((), |mut app| async move {
         initialize_app(&mut app);
         let workspace = mock_workspace(&mut app);
@@ -133,17 +138,14 @@ fn automatic_sleep_waits_for_the_idle_time_and_restarts_it_for_a_session_in_use(
                 terminal.update(ctx, |view, _| view.forget_recent_agent_start_for_test());
             }
             // Used a moment ago: not a candidate yet, so nothing is even attempted.
-            let two_hours = idle_sleep_threshold(2).unwrap();
             assert_eq!(
-                workspace.sleep_idle_tabs(Some(two_hours), ctx),
+                workspace.sleep_idle_tabs(Some(default_threshold), ctx),
                 SleepSummary::default()
             );
 
-            // Both have sat for three hours, but one of them is working.
+            // Both have sat an hour past the default, but one of them is working.
             for (_, terminal) in [&idle, &busy] {
-                terminal.update(ctx, |view, _| {
-                    view.set_agent_idle_for_test(Duration::from_secs(3 * 60 * 60));
-                });
+                terminal.update(ctx, |view, _| view.set_agent_idle_for_test(long_idle));
             }
             CLIAgentSessionsModel::handle(ctx).update(ctx, |sessions, ctx| {
                 let mut session = sessions.session(busy.1.id()).unwrap().clone();
@@ -164,7 +166,7 @@ fn automatic_sleep_waits_for_the_idle_time_and_restarts_it_for_a_session_in_use(
                 busy.1.as_ref(ctx).agent_idle_for() < Duration::from_secs(60),
                 "a working session's idle time starts over"
             );
-            assert!(idle.1.as_ref(ctx).agent_idle_for() >= Duration::from_secs(3 * 60 * 60));
+            assert!(idle.1.as_ref(ctx).agent_idle_for() >= long_idle);
         });
     });
 }

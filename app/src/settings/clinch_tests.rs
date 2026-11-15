@@ -50,6 +50,6 @@ fn agent_conversation_finder_settings_round_trip_and_legacy_values_fall_back() {
 }
 
 #[test]
-fn idle_agent_tabs_sleep_after_two_hours_by_default() {
-    assert_eq!(ClinchSleepIdleAgentTabsAfterHours::default_value(), 2);
+fn idle_agent_tabs_sleep_after_a_day_by_default() {
+    assert_eq!(ClinchSleepIdleAgentTabsAfterHours::default_value(), 24);
 }

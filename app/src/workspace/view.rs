@@ -27669,6 +27669,9 @@ impl TypedActionView for Workspace {
             WakeTab(index) => {
                 self.wake_tab(*index, ctx);
             }
+            WakePane(locator) => {
+                self.wake_pane(*locator, ctx);
+            }
             SleepIdleTabs { every_project } => {
                 self.sleep_idle_tabs_from_menu(*every_project, ctx);
             }
@@ -28502,21 +28505,6 @@ impl TypedActionView for Workspace {
                 self.sync_window_button_visibility(ctx);
             }
         };
-        // Choosing a tab wakes it. Only these count as choosing: a tab that ends up on screen
-        // because its neighbour closed, or because the app just launched, stays asleep.
-        if matches!(
-            action,
-            ActivateTab(_)
-                | ActivateTabByNumber(_)
-                | ActivatePrevTab
-                | ActivateNextTab
-                | ActivateLastTab
-                | CyclePrevSession
-                | CycleNextSession
-                | FocusPane(_)
-        ) {
-            self.wake_chosen_tab_soon(ctx);
-        }
         if action.should_save_app_state_on_action() {
             ctx.dispatch_global_action("workspace:save_app", ());
         }
