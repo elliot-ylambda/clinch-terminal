@@ -28,6 +28,67 @@ if (install_update /tmp/swap /tmp/archive /Applications/Clinch.app not-a-pid 501
   exit 1
 fi
 
+# The pre-update snapshot keeps the registry and each registered Claude transcript, found in one
+# walk of the transcript tree, and prunes automatic snapshots beyond the newest 15.
+SNAP_HOME="$TMP/snapshot-home"
+SNAP_SUPPORT="$SNAP_HOME/Library/Application Support/sh.clinch.Clinch"
+SNAP_REG="$SNAP_HOME/.warp/agent-resume"
+PROJECTS="$SNAP_HOME/.claude/projects"
+mkdir -p "$SNAP_REG" "$SNAP_SUPPORT" "$PROJECTS/-repo-a" "$PROJECTS/-repo-b/nested"
+printf '{"command": "clinch_agent_resume_launch claude sess-a --model opus"}\n' > "$SNAP_REG/pane-1.json"
+printf '{"command": "warp_agent_resume_launch claude sess-b"}\n' > "$SNAP_REG/pane-2.json"
+printf '{"command": "clinch_agent_resume_launch claude sess-missing"}\n' > "$SNAP_REG/pane-3.json"
+printf '{"command": "clinch_agent_resume_launch codex sess-codex"}\n' > "$SNAP_REG/pane-4.json"
+printf 'transcript a\n' > "$PROJECTS/-repo-a/sess-a.jsonl"
+printf 'transcript b\n' > "$PROJECTS/-repo-b/nested/sess-b.jsonl"
+printf 'codex\n' > "$PROJECTS/-repo-a/sess-codex.jsonl"
+printf 'unregistered\n' > "$PROJECTS/-repo-a/sess-other.jsonl"
+for day in $(seq -w 1 15); do
+  old="$SNAP_SUPPORT/session-recovery-202601$day-000000"
+  mkdir -p "$old"
+  : > "$old/.auto-snapshot"
+  touch -t "202601${day}0000" "$old"
+done
+mkdir -p "$SNAP_SUPPORT/session-recovery-manual"
+touch -t 202001010000 "$SNAP_SUPPORT/session-recovery-manual"
+
+FIND_CALLS="$TMP/find-calls"
+find() {
+  echo call >> "$FIND_CALLS"
+  command find "$@"
+}
+snapshot_session_state "$SNAP_HOME" "$SNAP_SUPPORT"
+unset -f find
+
+snapshot_failure() {
+  echo "session snapshot: $1" >&2
+  exit 1
+}
+# The real registry names hundreds of sessions; one walk per session made updates take minutes.
+[[ "$(wc -l < "$FIND_CALLS" | tr -d ' ')" == 1 ]] \
+  || snapshot_failure "walked the transcript tree more than once"
+snap="$(ls -dt "$SNAP_SUPPORT"/session-recovery-*/ | head -1)"
+snap="${snap%/}"
+[[ -f "$snap/.auto-snapshot" && -f "$snap/agent-resume/pane-1.json" ]] \
+  || snapshot_failure "registry was not copied"
+[[ "$(cat "$snap/sess-a.jsonl")" == "transcript a" ]] || snapshot_failure "sess-a was not copied"
+[[ "$(cat "$snap/sess-b.jsonl")" == "transcript b" ]] \
+  || snapshot_failure "a transcript in a nested project folder was not copied"
+for unexpected in sess-missing.jsonl sess-codex.jsonl sess-other.jsonl .claude-session-ids; do
+  [[ ! -e "$snap/$unexpected" ]] || snapshot_failure "unexpected $unexpected in the snapshot"
+done
+printf 'appended later\n' >> "$PROJECTS/-repo-a/sess-a.jsonl"
+[[ "$(cat "$snap/sess-a.jsonl")" == "transcript a" ]] \
+  || snapshot_failure "the snapshot changed when the live transcript did"
+auto_count=0
+for dir in "$SNAP_SUPPORT"/session-recovery-*/; do
+  if [[ -f "$dir/.auto-snapshot" ]]; then auto_count=$((auto_count + 1)); fi
+done
+[[ "$auto_count" == 15 ]] || snapshot_failure "kept $auto_count automatic snapshots instead of 15"
+[[ ! -e "$SNAP_SUPPORT/session-recovery-20260101-000000" ]] \
+  || snapshot_failure "the oldest automatic snapshot was not pruned"
+[[ -d "$SNAP_SUPPORT/session-recovery-manual" ]] || snapshot_failure "a manual snapshot was pruned"
+
 echo "clinch update helper validation tests passed"
 
 SWAP_BIN="$TMP/clinch-update-swap"

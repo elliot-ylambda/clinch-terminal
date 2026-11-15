@@ -45,19 +45,34 @@ verify_bundle() {
 
 snapshot_session_state() (
   set +e
-  local home="$1" support="$2" reg snap sid transcript
+  local home="$1" support="$2" reg snap ids transcript
   reg="$home/.warp/agent-resume"
   [[ -d "$reg" ]] || return 0
   snap="$support/session-recovery-$(date +%Y%m%d-%H%M%S)"
   mkdir -p "$snap" || return 0
   : > "$snap/.auto-snapshot"
   cp -R "$reg" "$snap/agent-resume" 2>/dev/null
+  ids="$snap/.claude-session-ids"
   sed -nE 's/.*(clinch|warp)_agent_resume_launch claude ([A-Za-z0-9-]+).*/\2/p' \
-      "$reg"/*.json 2>/dev/null | sort -u | while read -r sid; do
-    [[ -n "$sid" ]] || continue
-    transcript="$(find "$home/.claude/projects" -name "$sid.jsonl" -print -quit 2>/dev/null)"
-    [[ -n "$transcript" ]] && cp "$transcript" "$snap/" 2>/dev/null
-  done
+      "$reg"/*.json 2>/dev/null | sort -u > "$ids"
+  # The registry can name hundreds of sessions. Walk the transcript tree once, keeping the first
+  # match for each session, rather than once per session. An APFS clone (`cp -c`) is instant and
+  # shares blocks with the live transcript, where a full copy of every transcript took minutes and
+  # several gigabytes while the update waited. Other filesystems fall back to a plain copy.
+  if [[ -s "$ids" ]]; then
+    find "$home/.claude/projects" -type f -name '*.jsonl' 2>/dev/null \
+      | awk -v ids="$ids" '
+          BEGIN { while ((getline id < ids) > 0) wanted[id ".jsonl"] = 1 }
+          {
+            name = $0
+            sub(/.*\//, "", name)
+            if (name in wanted) { delete wanted[name]; print }
+          }' \
+      | while IFS= read -r transcript; do
+          cp -c "$transcript" "$snap/" 2>/dev/null || cp "$transcript" "$snap/" 2>/dev/null
+        done
+  fi
+  rm -f "$ids"
   ls -dt "$support"/session-recovery-*/ 2>/dev/null | {
     local count=0 dir
     while read -r dir; do
