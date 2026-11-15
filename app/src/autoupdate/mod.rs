@@ -59,6 +59,16 @@ pub enum ClinchDownloadProgress {
     Verifying,
 }
 
+/// Which part of installing a Clinch update is running, for the update pop-up. Both happen while
+/// Clinch is still open; the helper swaps the app in once Clinch has quit.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ClinchInstallPhase {
+    /// The helper is saving a copy of the agent sessions, so nothing is lost if the update fails.
+    SavingSessions,
+    /// The helper is copying the new version next to this one and checking it again.
+    PreparingApp,
+}
+
 /// Why a Clinch update the user agreed to didn't finish. Shown until they retry or close it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ClinchUpdateFailure {
@@ -165,6 +175,8 @@ pub struct AutoupdateState {
     test_clinch_release_url: Option<String>,
     install_after_download: bool,
     clinch_download_progress: Option<ClinchDownloadProgress>,
+    /// The part of the install that is running. Cleared whenever the stage changes.
+    clinch_install_phase: Option<ClinchInstallPhase>,
     clinch_failure: Option<ClinchUpdateFailure>,
     /// The running download, so the update pop-up can cancel it.
     download_handle: Option<SpawnedFutureHandle>,
@@ -196,6 +208,7 @@ impl AutoupdateState {
             test_clinch_release_url: None,
             install_after_download: false,
             clinch_download_progress: None,
+            clinch_install_phase: None,
             clinch_failure: None,
             download_handle: None,
             check_in_flight: false,
@@ -366,6 +379,20 @@ impl AutoupdateState {
     ) {
         if self.stage == AutoupdateStage::DownloadingUpdate {
             self.clinch_download_progress = Some(progress);
+            ctx.notify();
+        }
+    }
+
+    /// The helper started the next part of the install. One that reports after the install has
+    /// moved on, or been called off, is ignored.
+    #[cfg(target_os = "macos")]
+    fn clinch_install_phase_changed(
+        &mut self,
+        phase: ClinchInstallPhase,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        if matches!(self.stage, AutoupdateStage::Updating { .. }) {
+            self.clinch_install_phase = Some(phase);
             ctx.notify();
         }
     }
@@ -866,6 +893,7 @@ impl AutoupdateState {
     /// module to correctly maintain the update state machine.
     fn set_autoupdate_stage(&mut self, stage: AutoupdateStage, ctx: &mut ModelContext<Self>) {
         self.stage = stage;
+        self.clinch_install_phase = None;
         ctx.notify();
     }
 
@@ -1204,6 +1232,10 @@ pub fn dismiss_clinch_update_failure(app: &mut AppContext) {
 
 pub fn clinch_download_progress(app: &AppContext) -> Option<ClinchDownloadProgress> {
     AutoupdateState::as_ref(app).clinch_download_progress
+}
+
+pub fn clinch_install_phase(app: &AppContext) -> Option<ClinchInstallPhase> {
+    AutoupdateState::as_ref(app).clinch_install_phase
 }
 
 pub fn clinch_update_failure(app: &AppContext) -> Option<ClinchUpdateFailure> {

@@ -107,6 +107,51 @@ fn clinch_pre_quit_install_failure_keeps_the_verified_update_retryable() {
     });
 }
 
+#[cfg(target_os = "macos")]
+#[test]
+fn the_install_phase_is_kept_only_while_installing_and_cleared_when_the_stage_moves_on() {
+    App::test((), |mut app| async move {
+        app.add_singleton_model(|ctx| AppExecutionMode::new(ExecutionMode::App, false, ctx));
+        let autoupdate_state = initialize_app(&mut app);
+        let version = make_version_info("v2", false);
+
+        app.update_model(&autoupdate_state, |autoupdate, ctx| {
+            // A phase that reports before the install starts, or after it was called off, is
+            // ignored.
+            autoupdate.clinch_install_phase_changed(ClinchInstallPhase::SavingSessions, ctx);
+            assert_eq!(autoupdate.clinch_install_phase, None);
+
+            autoupdate.set_autoupdate_stage(
+                AutoupdateStage::Updating {
+                    new_version: version.clone(),
+                    update_id: "ready".to_owned(),
+                },
+                ctx,
+            );
+            autoupdate.clinch_install_phase_changed(ClinchInstallPhase::SavingSessions, ctx);
+            assert_eq!(
+                autoupdate.clinch_install_phase,
+                Some(ClinchInstallPhase::SavingSessions)
+            );
+            autoupdate.clinch_install_phase_changed(ClinchInstallPhase::PreparingApp, ctx);
+            assert_eq!(
+                autoupdate.clinch_install_phase,
+                Some(ClinchInstallPhase::PreparingApp)
+            );
+
+            autoupdate.set_autoupdate_stage(
+                AutoupdateStage::UpdatedPendingRestart {
+                    new_version: version.clone(),
+                },
+                ctx,
+            );
+            assert_eq!(autoupdate.clinch_install_phase, None);
+            autoupdate.clinch_install_phase_changed(ClinchInstallPhase::PreparingApp, ctx);
+            assert_eq!(autoupdate.clinch_install_phase, None);
+        });
+    });
+}
+
 fn initialize_app(app: &mut App) -> ModelHandle<AutoupdateState> {
     let server_api_provider = app.add_singleton_model(|_| ServerApiProvider::new_for_test());
     app.add_singleton_model(|_| AuthStateProvider::new_for_test());
