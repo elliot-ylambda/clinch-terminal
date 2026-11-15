@@ -7,7 +7,7 @@ fn version() -> VersionInfo {
 }
 
 fn step(stage: AutoupdateStage, opened_here: bool) -> Option<UpdatePopupStep> {
-    update_popup_step(&stage, None, None, opened_here)
+    update_popup_step(&stage, None, None, None, opened_here)
 }
 
 #[test]
@@ -45,17 +45,23 @@ fn an_update_nobody_asked_about_here_stays_out_of_the_way() {
 #[test]
 fn an_install_under_way_shows_in_every_window_and_stays_up() {
     let installing = [
-        AutoupdateStage::Updating {
-            new_version: version(),
-            update_id: "ready".to_owned(),
-        },
-        AutoupdateStage::UpdatedPendingRestart {
-            new_version: version(),
-        },
+        (
+            AutoupdateStage::Updating {
+                new_version: version(),
+                update_id: "ready".to_owned(),
+            },
+            InstallStep::SavingSessions,
+        ),
+        (
+            AutoupdateStage::UpdatedPendingRestart {
+                new_version: version(),
+            },
+            InstallStep::Restarting,
+        ),
     ];
-    for stage in installing {
+    for (stage, install_step) in installing {
         let shown = step(stage, false).unwrap();
-        assert_eq!(shown, UpdatePopupStep::Installing);
+        assert_eq!(shown, UpdatePopupStep::Installing(install_step));
         assert!(!shown.closes_on_click_outside());
     }
     assert!(!UpdatePopupStep::Downloading {
@@ -71,8 +77,15 @@ fn an_install_under_way_shows_in_every_window_and_stays_up() {
 
 #[test]
 fn the_download_steps_follow_its_progress() {
-    let downloading =
-        |progress| update_popup_step(&AutoupdateStage::DownloadingUpdate, progress, None, false);
+    let downloading = |progress| {
+        update_popup_step(
+            &AutoupdateStage::DownloadingUpdate,
+            progress,
+            None,
+            None,
+            false,
+        )
+    };
     assert_eq!(
         downloading(None),
         Some(UpdatePopupStep::Downloading {
@@ -97,13 +110,70 @@ fn the_download_steps_follow_its_progress() {
 }
 
 #[test]
+fn the_install_bar_follows_the_helper_and_is_only_full_once_clinch_is_quitting() {
+    let updating = AutoupdateStage::Updating {
+        new_version: version(),
+        update_id: "ready".to_owned(),
+    };
+    let installing =
+        |stage: &AutoupdateStage, phase| match update_popup_step(stage, None, phase, None, false) {
+            Some(UpdatePopupStep::Installing(install_step)) => install_step,
+            other => panic!("expected an install step, got {other:?}"),
+        };
+    assert_eq!(installing(&updating, None), InstallStep::SavingSessions);
+    assert_eq!(
+        installing(&updating, Some(ClinchInstallPhase::SavingSessions)),
+        InstallStep::SavingSessions
+    );
+    assert_eq!(
+        installing(&updating, Some(ClinchInstallPhase::PreparingApp)),
+        InstallStep::PreparingApp
+    );
+    let restarting = AutoupdateStage::UpdatedPendingRestart {
+        new_version: version(),
+    };
+    assert_eq!(
+        installing(&restarting, Some(ClinchInstallPhase::PreparingApp)),
+        InstallStep::Restarting
+    );
+
+    // A full bar while Clinch is still working on the install reads as frozen.
+    let steps = [
+        InstallStep::SavingSessions,
+        InstallStep::PreparingApp,
+        InstallStep::Restarting,
+    ];
+    let fractions = steps.map(InstallStep::fraction);
+    assert!(
+        fractions.windows(2).all(|pair| pair[0] < pair[1]),
+        "{fractions:?}"
+    );
+    assert!(fractions[0] > 0. && fractions[1] < 1.);
+    assert_eq!(fractions[2], 1.);
+    assert_eq!(
+        steps.map(InstallStep::description),
+        [
+            "Saving your sessions (step 1 of 3). Clinch will quit and reopen on its own.",
+            "Getting the new version ready (step 2 of 3). Clinch will quit and reopen on its own.",
+            "Quitting to finish (step 3 of 3). Clinch will reopen on its own.",
+        ]
+    );
+}
+
+#[test]
 fn a_failure_shows_until_it_is_closed_even_though_the_update_is_still_available() {
     let available = AutoupdateStage::UpdateAvailable {
         new_version: version(),
         update_id: "available".to_owned(),
     };
     assert_eq!(
-        update_popup_step(&available, None, Some(ClinchUpdateFailure::Download), false),
+        update_popup_step(
+            &available,
+            None,
+            None,
+            Some(ClinchUpdateFailure::Download),
+            false
+        ),
         Some(UpdatePopupStep::Failed(ClinchUpdateFailure::Download))
     );
 }

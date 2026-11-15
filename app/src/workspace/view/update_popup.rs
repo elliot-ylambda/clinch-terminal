@@ -14,7 +14,9 @@ use warpui::fonts::{Properties, Weight};
 use warpui::platform::Cursor;
 use warpui::{AppContext, Element, SingletonEntity as _};
 
-use crate::autoupdate::{self, AutoupdateStage, ClinchDownloadProgress, ClinchUpdateFailure};
+use crate::autoupdate::{
+    self, AutoupdateStage, ClinchDownloadProgress, ClinchInstallPhase, ClinchUpdateFailure,
+};
 use crate::settings::ClinchSettings;
 use crate::terminal::cli_agent_sessions::restore::{
     mid_turn_panes, running_commands_outside_agents,
@@ -36,8 +38,50 @@ pub(super) enum UpdatePopupStep {
     Confirm { version: String },
     Downloading { received: u64, total: u64 },
     Verifying,
-    Installing,
+    Installing(InstallStep),
     Failed(ClinchUpdateFailure),
+}
+
+/// The parts of an install, in order. The first two run while Clinch is open; the last is the quit,
+/// after which the helper swaps the app in and reopens it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum InstallStep {
+    SavingSessions,
+    PreparingApp,
+    Restarting,
+}
+
+impl InstallStep {
+    const COUNT: u8 = 3;
+
+    fn number(self) -> u8 {
+        match self {
+            Self::SavingSessions => 1,
+            Self::PreparingApp => 2,
+            Self::Restarting => 3,
+        }
+    }
+
+    /// How full the bar is: it fills a third at a time as the install moves through its parts.
+    pub(super) fn fraction(self) -> f32 {
+        f32::from(self.number()) / f32::from(Self::COUNT)
+    }
+
+    pub(super) fn description(self) -> String {
+        let (doing, after) = match self {
+            Self::SavingSessions => ("Saving your sessions", "Clinch will quit and reopen"),
+            Self::PreparingApp => (
+                "Getting the new version ready",
+                "Clinch will quit and reopen",
+            ),
+            Self::Restarting => ("Quitting to finish", "Clinch will reopen"),
+        };
+        format!(
+            "{doing} (step {} of {}). {after} on its own.",
+            self.number(),
+            Self::COUNT
+        )
+    }
 }
 
 impl UpdatePopupStep {
@@ -57,6 +101,7 @@ impl UpdatePopupStep {
 pub(super) fn update_popup_step(
     stage: &AutoupdateStage,
     progress: Option<ClinchDownloadProgress>,
+    install_phase: Option<ClinchInstallPhase>,
     failure: Option<ClinchUpdateFailure>,
     opened_here: bool,
 ) -> Option<UpdatePopupStep> {
@@ -74,8 +119,15 @@ pub(super) fn update_popup_step(
                 total: 0,
             },
         }),
-        AutoupdateStage::Updating { .. } | AutoupdateStage::UpdatedPendingRestart { .. } => {
-            Some(UpdatePopupStep::Installing)
+        AutoupdateStage::Updating { .. } => {
+            Some(UpdatePopupStep::Installing(match install_phase {
+                Some(ClinchInstallPhase::PreparingApp) => InstallStep::PreparingApp,
+                // Saving the sessions is the first thing an install does.
+                Some(ClinchInstallPhase::SavingSessions) | None => InstallStep::SavingSessions,
+            }))
+        }
+        AutoupdateStage::UpdatedPendingRestart { .. } => {
+            Some(UpdatePopupStep::Installing(InstallStep::Restarting))
         }
         _ if !opened_here => None,
         AutoupdateStage::CheckingForUpdate => Some(UpdatePopupStep::Checking),
@@ -143,6 +195,7 @@ pub(super) fn render_clinch_update_popup(
     let step = update_popup_step(
         &autoupdate::get_update_state(app),
         autoupdate::clinch_download_progress(app),
+        autoupdate::clinch_install_phase(app),
         autoupdate::clinch_update_failure(app),
         opened_here,
     )?;
@@ -254,10 +307,10 @@ fn render_step(
             bar: Some(1.),
             ..Default::default()
         },
-        UpdatePopupStep::Installing => StepContent {
+        UpdatePopupStep::Installing(step) => StepContent {
             title: "Installing update".to_owned(),
-            body: Some("Clinch will quit and reopen on its own.".to_owned()),
-            bar: Some(1.),
+            body: Some(step.description()),
+            bar: Some(step.fraction()),
             ..Default::default()
         },
         UpdatePopupStep::Failed(ClinchUpdateFailure::Download) => StepContent {

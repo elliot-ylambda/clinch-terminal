@@ -26,7 +26,7 @@ use warpui::{AppContext, ModelContext, SingletonEntity};
 
 use super::{release_assets_directory_url, DownloadReady};
 use crate::appearance::AppearanceManager;
-use crate::autoupdate::{AutoupdateStage, AutoupdateState};
+use crate::autoupdate::{AutoupdateStage, AutoupdateState, ClinchInstallPhase};
 use crate::channel::{Channel, ChannelState};
 use crate::safe_info;
 
@@ -112,6 +112,18 @@ where
                     .as_ref()
                     .filter(|release| release.version_info().version == new_version.version)
                     .map(|release| (release.archive_sha256().to_owned(), release.archive_size()));
+                // The update pop-up follows the install through each of its parts.
+                let on_install_phase = {
+                    let (sender, receiver) = async_channel::unbounded();
+                    let _ = ctx.spawn_stream_local(
+                        receiver,
+                        AutoupdateState::clinch_install_phase_changed,
+                        |_, _| {},
+                    );
+                    move |phase| {
+                        let _ = sender.try_send(phase);
+                    }
+                };
                 // Apply the update in a background thread.
                 ctx.spawn(
                     async move {
@@ -120,6 +132,7 @@ where
                             &new_version,
                             &update_id,
                             clinch_archive,
+                            on_install_phase,
                         )
                         .await
                         .map(|_| Some(new_version));
@@ -393,6 +406,7 @@ async fn apply_update(
     version_info: &VersionInfo,
     update_id: &str,
     clinch_archive: Option<(String, u64)>,
+    on_install_phase: impl Fn(ClinchInstallPhase) + Send,
 ) -> Result<()> {
     if ChannelState::uses_clinch_updater() {
         let (archive_sha256, archive_size) =
@@ -402,6 +416,7 @@ async fn apply_update(
             update_id,
             &archive_sha256,
             archive_size,
+            on_install_phase,
         )
         .await;
     }
@@ -496,6 +511,7 @@ async fn prepare_clinch_external_update(
     update_id: &str,
     archive_sha256: &str,
     archive_size: u64,
+    on_install_phase: impl Fn(ClinchInstallPhase) + Send,
 ) -> Result<()> {
     let bundle_path = PathBuf::from(get_bundle_path()?);
     let staged = super::clinch::staged_bundle_path(update_id);
@@ -520,6 +536,7 @@ async fn prepare_clinch_external_update(
 
     let home = env::var("HOME").context("HOME is unavailable for Clinch update")?;
     let support = warp_core::paths::state_dir();
+    on_install_phase(ClinchInstallPhase::SavingSessions);
     let preflight = Command::new(&helper)
         .arg("preflight")
         .arg(&home)
@@ -567,6 +584,7 @@ async fn prepare_clinch_external_update(
         .create(true)
         .append(true)
         .open(&log_path)?;
+    on_install_phase(ClinchInstallPhase::PreparingApp);
     let mut command = blocking::Command::new(&helper);
     command.args(&arguments);
     let mut process = command
