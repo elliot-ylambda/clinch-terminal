@@ -14,6 +14,8 @@ ignore = [
     { id = "RUSTSEC-2026-0206", reason = "rustybuzz is an unmaintained transitive dependency of the latest resvg/usvg release; the advisory reports no vulnerability and no safe upgrade. Migrate when resvg adopts harfrust." },
     { id = "RUSTSEC-2024-0449", reason = "unsafe-libyaml is an unmaintained dependency of the deprecated serde_yaml 0.9 used by the pinned mermaid_to_svg git dependency; the advisory reports no vulnerability and no safe upgrade. Migrate when mermaid_to_svg moves off serde_yaml." },
     { id = "RUSTSEC-2026-0441", reason = "pin-utils is archived; the advisory reports no vulnerability. The security-patched aws-config 1.8.16 pins aws-smithy-http 0.63, which still uses it; newer Smithy and futures-util releases do not. Drop this with that patch (third_party/security-patches/README.md)." },
+    { id = "RUSTSEC-2026-0543", reason = "chrono is unmaintained; the advisory reports no vulnerability and no safe upgrade, and chrono is used across the workspace and by many dependencies. Migrate to jiff or time, then drop this." },
+    { id = "RUSTSEC-2026-0542", reason = "humantime is unmaintained only because it wraps chrono (same announcement, no vulnerability, no safe upgrade); it comes in through env_logger 0.10. Drop this with RUSTSEC-2026-0543." },
 ]
 
 [licenses]

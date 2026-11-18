@@ -2695,9 +2695,9 @@ dependencies = [
 
 [[package]]
 name = "chacha20"
-version = "0.10.0"
+version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6f8d983286843e49675a4b7a2d174efe136dc93a18d69130dd18198a6c167601"
+checksum = "65c35e4b699c7e15ccbe7ee35c005e4fc0a278d22238a2857e6ce2dadeda1b06"
 dependencies = [
  "cfg-if",
  "cpufeatures 0.3.0",
@@ -7526,9 +7526,9 @@ dependencies = [
 
 [[package]]
 name = "libz-sys"
-version = "1.1.31"
+version = "1.1.33"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ff20308ecabd635a2dc1dd5834a86c462cca20efba1d5d3ddab1f8aea3455cb2"
+checksum = "fee3f59f4321dab0c78d828942e7aa09d0bd8ad6e78a501977e6bf3d02938045"
 dependencies = [
  "cc",
  "libc",
@@ -8496,9 +8496,9 @@ dependencies = [
 
 [[package]]
 name = "nix"
-version = "0.31.2"
+version = "0.31.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5d6d0705320c1e6ba1d912b5e37cf18071b6c2e9b7fa8215a1e8a7651966f5d3"
+checksum = "cf20d2fde8ff38632c426f1165ed7436270b44f199fc55284c38276f9db47c3d"
 dependencies = [
  "bitflags 2.9.4",
  "cfg-if",
@@ -8525,7 +8525,7 @@ dependencies = [
  "sha2 0.10.9",
  "tar",
  "warp_core",
- "zip 9.0.0",
+ "zip 9.0.5",
 ]
 
 [[package]]
@@ -10208,7 +10208,7 @@ checksum = "1f21b97672d2dc848e7b25701ab4535618b92f4861c13cc3f7f7bed52ad3c8da"
 dependencies = [
  "futures",
  "indexmap 2.12.0",
- "nix 0.31.2",
+ "nix 0.31.3",
  "tokio",
  "tracing",
  "windows 0.62.2",
@@ -10625,7 +10625,7 @@ version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d2e8e8bcc7961af1fdac401278c6a831614941f6164ee3bf4ce61b7edb162207"
 dependencies = [
- "chacha20 0.10.0",
+ "chacha20 0.10.2",
  "getrandom 0.4.2",
  "rand_core 0.10.1",
 ]
@@ -12617,9 +12617,9 @@ dependencies = [
 
 [[package]]
 name = "spinning"
-version = "0.1.0"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2d4f0e86297cad2658d92a707320d87bf4e6ae1050287f51d19b67ef3f153a7b"
+checksum = "e3eb3ff294e9174f5c6fae3f9e27b890fd1c5115712b528b4c4e0710f152afa1"
 dependencies = [
  "lock_api",
 ]
@@ -15328,7 +15328,7 @@ dependencies = [
  "warp_web_event_bus",
  "wasm-bindgen",
  "web-sys",
- "zip 9.0.0",
+ "zip 9.0.5",
 ]
 
 [[package]]
@@ -17409,14 +17409,15 @@ dependencies = [
 
 [[package]]
 name = "zip"
-version = "9.0.0"
+version = "9.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "711e8c9646791c49b7eb799a19c4ae70a9b8372ddc6a1fa4778defd1e2aa5d5e"
+checksum = "6e04976da629d3b04204ba8105b396a193af8ad2583b2c79bfb3ab8af580a11e"
 dependencies = [
  "crc32fast",
  "flate2",
  "indexmap 2.12.0",
  "memchr",
+ "nix 0.31.3",
  "time",
  "typed-path 0.12.2",
  "zopfli",
