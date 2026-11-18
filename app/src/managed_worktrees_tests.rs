@@ -96,12 +96,75 @@ impl Fixture {
         .map(str::to_owned)
         .collect()
     }
+
+    /// Adds a `library` submodule to `main` and returns the library's own repository.
+    fn add_submodule(&self) -> PathBuf {
+        let library = self._dir.path().join("library");
+        std::fs::create_dir(&library).unwrap();
+        git(&library, &["init", "--quiet"]);
+        git(
+            &library,
+            &["commit", "--quiet", "--allow-empty", "-m", "library"],
+        );
+        git(
+            self.primary(),
+            &[
+                "submodule",
+                "add",
+                "--quiet",
+                &library.to_string_lossy(),
+                "library",
+            ],
+        );
+        git(self.primary(), &["commit", "--quiet", "-m", "add library"]);
+        library
+    }
+
+    /// Makes a new commit in the library and points `main`'s submodule at it, as bumping a pinned
+    /// dependency does. Returns the new commit.
+    fn bump_submodule(&self, library: &Path) -> String {
+        git(
+            library,
+            &["commit", "--quiet", "--allow-empty", "-m", "newer library"],
+        );
+        let newer = git(library, &["rev-parse", "HEAD"]);
+        let checkout = self.primary().join("library");
+        git(&checkout, &["fetch", "--quiet", "origin"]);
+        git(&checkout, &["checkout", "--quiet", "--detach", &newer]);
+        git(
+            self.primary(),
+            &["commit", "--quiet", "-am", "bump library"],
+        );
+        newer
+    }
 }
 
-/// Makes Git's files for the worktree look untouched for `age`.
+/// Makes the worktree look untouched for `age`: Git's files for it, and the time of each move of
+/// its HEAD that its history records.
 fn age_worktree(worktree: &Path, age: Duration) {
     let when = SystemTime::now() - age;
     let git_dir = worktree_git_dir(worktree).unwrap();
+    let seconds = when
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let history = git_dir.join("logs/HEAD");
+    if let Ok(entries) = std::fs::read_to_string(&history) {
+        let aged: String = entries
+            .lines()
+            .map(|entry| {
+                // The entry `git worktree add` makes has no message, and no tab before one.
+                let (who_and_when, message) = match entry.find('\t') {
+                    Some(tab) => entry.split_at(tab),
+                    None => (entry, ""),
+                };
+                let (who_and_seconds, zone) = who_and_when.rsplit_once(' ').unwrap();
+                let (who, _) = who_and_seconds.rsplit_once(' ').unwrap();
+                format!("{who} {seconds} {zone}{message}\n")
+            })
+            .collect();
+        std::fs::write(&history, aged).unwrap();
+    }
     for file in ["HEAD", "index", "logs/HEAD"] {
         if let Ok(file) = std::fs::File::options()
             .write(true)
@@ -110,6 +173,16 @@ fn age_worktree(worktree: &Path, age: Duration) {
             file.set_modified(when).unwrap();
         }
     }
+}
+
+/// Marks the file as just written, as `git gc` does when it rewrites every worktree's history.
+fn touch(file: &Path) {
+    std::fs::File::options()
+        .write(true)
+        .open(file)
+        .unwrap()
+        .set_modified(SystemTime::now())
+        .unwrap();
 }
 
 fn current_branch(worktree: &Path) -> String {
@@ -208,6 +281,32 @@ fn the_base_is_origin_main_when_the_local_main_is_behind_it() {
 }
 
 #[test]
+fn the_base_is_the_remote_branch_main_tracks_when_main_is_behind_it() {
+    let fixture = Fixture::new();
+    let primary = fixture.primary();
+    // A fork whose `main` tracks another remote, and no `origin/main` at all.
+    let first = git(primary, &["rev-parse", "HEAD"]);
+    std::fs::write(primary.join("README.md"), "newer\n").unwrap();
+    git(primary, &["commit", "--quiet", "-am", "second"]);
+    git(primary, &["update-ref", "refs/remotes/fork/main", "HEAD"]);
+    git(primary, &["reset", "--quiet", "--hard", &first]);
+    git(
+        primary,
+        &["remote", "add", "fork", "https://example.invalid/fork.git"],
+    );
+    git(primary, &["config", "branch.main.remote", "fork"]);
+    git(primary, &["config", "branch.main.merge", "refs/heads/main"]);
+    assert_eq!(block_on(base_branch(primary)).as_deref(), Some("fork/main"));
+
+    let prepared = fixture.prepare(&[]);
+    assert_eq!(prepared.base, "fork/main");
+    assert_eq!(
+        git(&prepared.path, &["rev-parse", "HEAD"]),
+        git(primary, &["rev-parse", "fork/main"])
+    );
+}
+
+#[test]
 fn cleanup_removes_old_unused_worktrees_beyond_those_kept() {
     let fixture = Fixture::new();
     let in_use_worktree = |fixture: &Fixture, in_use: &[&Path]| fixture.prepare(in_use);
@@ -268,6 +367,105 @@ fn cleanup_removes_old_unused_worktrees_beyond_those_kept() {
     assert!(!branches.contains(&with_env_copy.branch));
     assert!(branches.contains(&recent.branch));
     assert!(branches.contains(&"feature-x".to_owned()));
+}
+
+#[test]
+fn a_worktree_s_age_is_when_its_head_last_moved_not_when_git_rewrote_its_history() {
+    let fixture = Fixture::new();
+    let first = fixture.prepare(&[]);
+    let second = fixture.prepare(&[&first.path]);
+    for prepared in [&first, &second] {
+        age_worktree(&prepared.path, Duration::from_secs(8 * 24 * 60 * 60));
+    }
+    // `git gc` expires old history entries in every worktree, writing each history file anew.
+    touch(&worktree_git_dir(&first.path).unwrap().join("logs/HEAD"));
+
+    let removed = fixture.clean_up(0);
+    assert_eq!(removed.len(), 2, "both went unused for 8 days: {removed:?}");
+    assert!(!first.path.exists() && !second.path.exists());
+}
+
+#[test]
+fn the_newest_history_entry_s_time_is_read() {
+    let history = "0000000 1111111 Ada Lovelace <ada@example.com> 1700000000 +0100\tcommit: one\n\
+                   1111111 2222222 Ada Lovelace <ada@example.com> 1700000500 -0700\tcheckout: moving\n";
+    assert_eq!(
+        newest_history_entry_time(history),
+        Some(SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_500))
+    );
+    // The entry `git worktree add` makes has no message.
+    assert_eq!(
+        newest_history_entry_time(
+            "0000000 1111111 Ada Lovelace <ada@example.com> 1700000900 +0000\n"
+        ),
+        Some(SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_900))
+    );
+    assert_eq!(newest_history_entry_time(""), None);
+    assert_eq!(newest_history_entry_time("garbled\n"), None);
+}
+
+#[test]
+fn reuse_crosses_a_submodule_change_when_git_recurses_into_submodules() {
+    let fixture = Fixture::new();
+    let library = fixture.add_submodule();
+    // As in a repository whose shared config turns recursion on for every worktree.
+    git(fixture.primary(), &["config", "submodule.recurse", "true"]);
+    let first = fixture.prepare(&[]);
+    fixture.bump_submodule(&library);
+
+    let second = fixture.prepare(&[]);
+    assert!(
+        second.reused,
+        "the unused worktree is switched, not replaced"
+    );
+    assert_eq!(
+        canonical(second.path.clone()),
+        canonical(first.path.clone())
+    );
+    assert_eq!(git(&second.path, &["status", "--porcelain"]), "");
+    assert_eq!(
+        git(&second.path, &["rev-parse", "HEAD"]),
+        git(fixture.primary(), &["rev-parse", "main"])
+    );
+}
+
+#[test]
+fn reuse_brings_checked_out_submodules_to_the_base_s_commits_without_fetching() {
+    let fixture = Fixture::new();
+    let library = fixture.add_submodule();
+    git(fixture.primary(), &["config", "submodule.recurse", "true"]);
+    let first = fixture.prepare(&[]);
+    git(&first.path, &["submodule", "update", "--quiet", "--init"]);
+    let newer = fixture.bump_submodule(&library);
+    // The worktree's copy of the library already has the newer commit.
+    git(&first.path.join("library"), &["fetch", "--quiet", "origin"]);
+
+    let second = fixture.prepare(&[]);
+    assert!(second.reused);
+    assert_eq!(
+        git(&second.path.join("library"), &["rev-parse", "HEAD"]),
+        newer
+    );
+    assert_eq!(git(&second.path, &["status", "--porcelain"]), "");
+}
+
+#[test]
+fn a_worktree_whose_submodule_lacks_the_base_s_commit_is_not_reused() {
+    let fixture = Fixture::new();
+    let library = fixture.add_submodule();
+    let first = fixture.prepare(&[]);
+    git(&first.path, &["submodule", "update", "--quiet", "--init"]);
+    let recorded = git(&first.path.join("library"), &["rev-parse", "HEAD"]);
+    fixture.bump_submodule(&library);
+
+    let second = fixture.prepare(&[]);
+    assert!(!second.reused, "matching the base would need a fetch");
+    assert_eq!(current_branch(&first.path), first.branch);
+    assert_eq!(
+        git(&first.path.join("library"), &["rev-parse", "HEAD"]),
+        recorded
+    );
+    assert_eq!(git(&first.path, &["status", "--porcelain"]), "");
 }
 
 #[test]
@@ -375,25 +573,7 @@ fn reuse_never_replaces_an_ignored_file_the_base_now_tracks() {
 #[test]
 fn work_only_a_submodule_holds_keeps_the_worktree() {
     let fixture = Fixture::new();
-    let library = fixture._dir.path().join("library");
-    std::fs::create_dir(&library).unwrap();
-    git(&library, &["init", "--quiet"]);
-    git(
-        &library,
-        &["commit", "--quiet", "--allow-empty", "-m", "library"],
-    );
-    let primary = fixture.primary();
-    git(
-        primary,
-        &[
-            "submodule",
-            "add",
-            "--quiet",
-            &library.to_string_lossy(),
-            "library",
-        ],
-    );
-    git(primary, &["commit", "--quiet", "-m", "add library"]);
+    fixture.add_submodule();
 
     let first = fixture.prepare(&[]);
     git(&first.path, &["submodule", "update", "--quiet", "--init"]);

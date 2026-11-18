@@ -5,6 +5,10 @@
 //! there is one, switching it to a new branch from the base and keeping its dependencies and build
 //! caches. Worktrees left unused for a week are removed, apart from a few kept for new tabs.
 //!
+//! Switching never recurses into submodules, whatever the repository's `submodule.recurse` says:
+//! submodules a worktree never checked out stay that way, as in a new worktree, and checked-out
+//! ones are moved to the base's commits only when they already hold them, so no fetch is needed.
+//!
 //! A worktree is unused when:
 //! - no Clinch pane, saved agent session or running process is in it, in any Clinch app, and no
 //!   new tab has taken it in the last few minutes
@@ -19,6 +23,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 use anyhow::{anyhow, Result};
+use instant::Instant;
 use warp_util::git::run_git_command;
 use warp_util::worktree_names::{generate_worktree_branch_name, is_generated_worktree_name};
 use warpui::r#async::Timer;
@@ -281,8 +286,9 @@ fn registry_folders(registry: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
-/// The branch new worktrees start from: `origin/main` when the local `main` is behind it or
-/// missing, otherwise `main`. Nothing is fetched.
+/// The branch new worktrees start from: the remote branch `main` tracks, or `origin/main` when it
+/// tracks none, when the local `main` is behind it or missing; otherwise `main`. Nothing is
+/// fetched.
 pub(crate) async fn base_branch(primary: &Path) -> Option<String> {
     let exists = |reference: &'static str| async move {
         run_git_command(primary, &["rev-parse", "--verify", "--quiet", reference])
@@ -290,26 +296,25 @@ pub(crate) async fn base_branch(primary: &Path) -> Option<String> {
             .is_ok()
     };
     let local = exists("refs/heads/main").await;
-    let remote = exists("refs/remotes/origin/main").await;
-    let base = match (local, remote) {
-        (true, true) => {
-            let behind = run_git_command(
-                primary,
-                &["merge-base", "--is-ancestor", "main", "origin/main"],
-            )
-            .await
-            .is_ok();
-            if behind {
-                "origin/main"
-            } else {
-                "main"
-            }
+    // A fork's `main` often tracks a remote other than `origin`.
+    let remote =
+        match run_git_command(primary, &["rev-parse", "--abbrev-ref", "main@{upstream}"]).await {
+            Ok(upstream) if !upstream.trim().is_empty() => Some(upstream.trim().to_owned()),
+            _ => exists("refs/remotes/origin/main")
+                .await
+                .then(|| "origin/main".to_owned()),
+        };
+    match (local, remote) {
+        (true, Some(remote)) => {
+            let behind =
+                run_git_command(primary, &["merge-base", "--is-ancestor", "main", &remote])
+                    .await
+                    .is_ok();
+            Some(if behind { remote } else { "main".to_owned() })
         }
-        (true, false) => "main",
-        (false, true) => "origin/main",
-        (false, false) => return None,
-    };
-    Some(base.to_owned())
+        (true, None) => Some("main".to_owned()),
+        (false, remote) => remote,
+    }
 }
 
 /// Clinch's worktrees of `repository`.
@@ -370,12 +375,29 @@ fn worktree_git_dir(worktree: &Path) -> Option<PathBuf> {
     Some(worktree.join(git_dir))
 }
 
+/// When the worktree was last used: the latest of when Git last wrote its HEAD or index and when
+/// its HEAD last moved, as its history records. Not when that history file was last written:
+/// `git gc` rewrites the history of every worktree, which would make all of them look just used.
 fn last_used(git_dir: &Path) -> SystemTime {
-    ["HEAD", "index", "logs/HEAD"]
+    let written = ["HEAD", "index"]
         .iter()
-        .filter_map(|file| std::fs::metadata(git_dir.join(file)).ok()?.modified().ok())
-        .max()
-        .unwrap_or(SystemTime::UNIX_EPOCH)
+        .filter_map(|file| std::fs::metadata(git_dir.join(file)).ok()?.modified().ok());
+    let moved = std::fs::read_to_string(git_dir.join("logs/HEAD"))
+        .ok()
+        .and_then(|history| newest_history_entry_time(&history));
+    written.chain(moved).max().unwrap_or(SystemTime::UNIX_EPOCH)
+}
+
+/// When the newest entry in a HEAD history (`logs/HEAD`) was made, from its own record:
+/// `<old> <new> <name> <<email>> <seconds> <zone>`, then a tab and a message unless it has none,
+/// as the entry `git worktree add` makes doesn't.
+fn newest_history_entry_time(history: &str) -> Option<SystemTime> {
+    let entry = history.lines().rev().find(|line| !line.trim().is_empty())?;
+    let who_and_when = entry
+        .split_once('\t')
+        .map_or(entry, |(who_and_when, _)| who_and_when);
+    let seconds = who_and_when.split_whitespace().rev().nth(1)?.parse().ok()?;
+    Some(SystemTime::UNIX_EPOCH + Duration::from_secs(seconds))
 }
 
 /// Whether the worktree at `path` still has `branch` checked out, read from its Git directory's
@@ -454,6 +476,12 @@ pub(crate) fn release_taken_worktree(path: &Path) {
 /// files in it or its submodules, commits missing from `base`, or commits only its HEAD's history
 /// reaches, such as one made on a detached HEAD and left.
 async fn unique_work(worktree: &Path, base: &str) -> Option<&'static str> {
+    // The quickest check first: reading the status of a big checkout takes far longer.
+    match run_git_command(worktree, &["rev-list", "--count", &format!("{base}..HEAD")]).await {
+        Ok(count) if count.trim() == "0" => {}
+        Ok(_) => return Some("it has commits that are not on the base branch"),
+        Err(_) => return Some("Git could not compare it with the base branch"),
+    }
     match run_git_command(
         worktree,
         &[
@@ -468,11 +496,6 @@ async fn unique_work(worktree: &Path, base: &str) -> Option<&'static str> {
         Ok(status) if status.trim().is_empty() => {}
         Ok(_) => return Some("it has changes or untracked files"),
         Err(_) => return Some("Git could not read its status"),
-    }
-    match run_git_command(worktree, &["rev-list", "--count", &format!("{base}..HEAD")]).await {
-        Ok(count) if count.trim() == "0" => {}
-        Ok(_) => return Some("it has commits that are not on the base branch"),
-        Err(_) => return Some("Git could not compare it with the base branch"),
     }
     if has_commits_only_its_history_reaches(worktree).await {
         return Some("its HEAD's history reaches commits no branch has");
@@ -583,7 +606,7 @@ async fn removal_loses(worktree: &Path, primary: &Path) -> Option<String> {
     None
 }
 
-/// The paths of the initialized submodules in `git submodule status --recursive` output.
+/// The paths of the initialized submodules in `git submodule status` output.
 fn initialized_submodules(status: &str) -> Vec<PathBuf> {
     status
         .lines()
@@ -656,15 +679,20 @@ pub(crate) async fn prepare_worktree(
     in_use: FoldersInUse,
     reserved: HashSet<String>,
 ) -> Result<PreparedWorktree> {
+    let started = Instant::now();
     let primary = &repository.primary;
-    let base = base_branch(primary)
-        .await
-        .ok_or_else(|| anyhow!("{} has no main branch", primary.display()))?;
-    let worktrees = managed_worktrees(&repository).await.unwrap_or_default();
+    // Listing what runs where takes a while, so it runs while Git is asked about the repository.
+    let (base, worktrees, in_use) = futures::join!(
+        base_branch(primary),
+        managed_worktrees(&repository),
+        in_use.with_other_apps(),
+    );
+    let base = base.ok_or_else(|| anyhow!("{} has no main branch", primary.display()))?;
+    let worktrees = worktrees.unwrap_or_default();
     let branch = new_branch_name(&repository, &worktrees, &reserved).await?;
 
     // Without knowing what runs where, a new worktree is the only safe choice.
-    if let Some(in_use) = in_use.with_other_apps().await {
+    if let Some(in_use) = in_use {
         let mut candidates: Vec<&ManagedWorktree> = worktrees
             .iter()
             .filter(|worktree| !in_use.covers(&worktree.path))
@@ -672,8 +700,19 @@ pub(crate) async fn prepare_worktree(
         // The most recently used have the freshest dependencies.
         candidates.sort_by_key(|worktree| Reverse(worktree.last_used));
         for worktree in candidates.into_iter().take(MAX_REUSE_CANDIDATES) {
-            if let Some(prepared) = reuse(worktree, &branch, &base).await {
-                return Ok(prepared);
+            match reuse(worktree, &branch, &base).await {
+                Ok(prepared) => {
+                    log::info!(
+                        "reused the worktree {} for a new tab in {:.1?}",
+                        prepared.path.display(),
+                        started.elapsed()
+                    );
+                    return Ok(prepared);
+                }
+                Err(reason) => log::info!(
+                    "did not reuse the worktree {}: {reason}",
+                    worktree.path.display()
+                ),
             }
         }
     }
@@ -707,6 +746,11 @@ pub(crate) async fn prepare_worktree(
             path.display()
         );
     }
+    log::info!(
+        "made the worktree {} for a new tab in {:.1?}",
+        path.display(),
+        started.elapsed()
+    );
     Ok(PreparedWorktree {
         path,
         branch,
@@ -716,50 +760,121 @@ pub(crate) async fn prepare_worktree(
 }
 
 /// Takes the unused `worktree` and switches it to a new `branch` from `base`, if it still holds
-/// nothing of its own.
-async fn reuse(worktree: &ManagedWorktree, branch: &str, base: &str) -> Option<PreparedWorktree> {
+/// nothing of its own. Otherwise says why not.
+async fn reuse(
+    worktree: &ManagedWorktree,
+    branch: &str,
+    base: &str,
+) -> Result<PreparedWorktree, String> {
     if !take(&worktree.git_dir) {
-        return None;
+        return Err("another new tab took it".to_owned());
     }
-    // Read once taken: the list it came from may be out of date.
-    let old_branch = current_branch(&worktree.path).await;
-    let old_commit = run_git_command(&worktree.path, &["rev-parse", "--verify", "HEAD"])
-        .await
-        .ok()
-        .map(|commit| commit.trim().to_owned());
-    let switched = unique_work(&worktree.path, base).await.is_none()
-        && old_commit.is_some()
-        // An ignored file the base now tracks makes the switch fail rather than replace it.
-        && run_git_command(
-            &worktree.path,
-            &[
-                "switch",
-                "--quiet",
-                "--no-overwrite-ignore",
-                "--no-track",
-                "-c",
-                branch,
-                base,
-            ],
-        )
-        .await
-        .is_ok();
-    if !switched {
+    if let Err(reason) = switch_to_new_branch(&worktree.path, branch, base).await {
         release(&worktree.git_dir);
-        return None;
+        return Err(reason);
     }
-    // Everything on the old branch is on the base, as checked above.
-    if let (Some(old_branch), Some(old_commit)) = (old_branch, old_commit) {
-        if is_generated_worktree_name(&old_branch) {
-            delete_branch_at(&worktree.path, &old_branch, &old_commit).await;
-        }
-    }
-    Some(PreparedWorktree {
+    Ok(PreparedWorktree {
         path: worktree.path.clone(),
         branch: branch.to_owned(),
         base: base.to_owned(),
         reused: true,
     })
+}
+
+/// Switches the taken `worktree` to a new `branch` from `base`, with its checked-out submodules,
+/// and deletes the branch Clinch named that it was on.
+async fn switch_to_new_branch(worktree: &Path, branch: &str, base: &str) -> Result<(), String> {
+    // Read once taken: the list it came from may be out of date.
+    let old_branch = current_branch(worktree).await;
+    let old_commit = run_git_command(worktree, &["rev-parse", "--verify", "HEAD"])
+        .await
+        .map(|commit| commit.trim().to_owned())
+        .map_err(|_| "it has no commit checked out".to_owned())?;
+    if let Some(reason) = unique_work(worktree, base).await {
+        return Err(reason.to_owned());
+    }
+    let submodules = submodules_ready_for(worktree, base).await?;
+    run_git_command(
+        worktree,
+        &[
+            "switch",
+            "--quiet",
+            // With `submodule.recurse` on, Git would try to check out submodules the worktree
+            // never set up, fail, and leave them broken.
+            "--no-recurse-submodules",
+            // An ignored file the base now tracks makes the switch fail rather than replace it.
+            "--no-overwrite-ignore",
+            "--no-track",
+            "-c",
+            branch,
+            base,
+        ],
+    )
+    .await
+    .map_err(|err| format!("Git could not switch it: {}", err.to_string().trim()))?;
+    if !submodules.is_empty() {
+        let mut args = vec![
+            "submodule",
+            "update",
+            "--quiet",
+            "--no-fetch",
+            "--checkout",
+            "--",
+        ];
+        args.extend(submodules.iter().map(String::as_str));
+        if let Err(err) = run_git_command(worktree, &args).await {
+            log::warn!(
+                "could not bring the submodules of {} to {base}: {err}",
+                worktree.display()
+            );
+        }
+    }
+    // Everything on the old branch is on the base, as checked above.
+    if let Some(old_branch) = old_branch.filter(|old| is_generated_worktree_name(old)) {
+        delete_branch_at(worktree, &old_branch, &old_commit).await;
+    }
+    Ok(())
+}
+
+/// The paths of the worktree's checked-out submodules, when each already holds the commit `base`
+/// records for it, so the switch can bring them along without fetching. Submodules the worktree
+/// never checked out stay that way, as in a new worktree.
+async fn submodules_ready_for(worktree: &Path, base: &str) -> Result<Vec<String>, String> {
+    if !worktree.join(".gitmodules").exists() {
+        return Ok(Vec::new());
+    }
+    let status = run_git_command(worktree, &["submodule", "status"])
+        .await
+        .map_err(|_| "its submodules can't be listed".to_owned())?;
+    let submodules: Vec<String> = initialized_submodules(&status)
+        .iter()
+        .map(|submodule| submodule.to_string_lossy().into_owned())
+        .collect();
+    for path in &submodules {
+        let recorded = run_git_command(
+            worktree,
+            &[
+                "rev-parse",
+                "--verify",
+                "--quiet",
+                &format!("{base}:{path}"),
+            ],
+        )
+        .await
+        .map_err(|_| format!("the base branch has no submodule {path}"))?;
+        let held = run_git_command(
+            &worktree.join(path),
+            &["cat-file", "-e", &format!("{}^{{commit}}", recorded.trim())],
+        )
+        .await
+        .is_ok();
+        if !held {
+            return Err(format!(
+                "its submodule {path} lacks the commit the base branch records"
+            ));
+        }
+    }
+    Ok(submodules)
 }
 
 /// A branch name no branch, worktree folder or other new tab uses.
@@ -823,13 +938,16 @@ pub(crate) async fn clean_up(
     };
     worktrees.sort_by_key(|worktree| Reverse(worktree.last_used));
     let now = SystemTime::now();
-    let mut kept = 0;
+    let total = worktrees.len();
+    let (mut busy, mut holding_work, mut kept, mut recent, mut irreplaceable) = (0, 0, 0, 0, 0);
     let mut removed = Vec::new();
     for worktree in worktrees {
-        if in_use_at_start.covers(&worktree.path)
-            || is_taken(&worktree.git_dir)
-            || unique_work(&worktree.path, &base).await.is_some()
-        {
+        if in_use_at_start.covers(&worktree.path) || is_taken(&worktree.git_dir) {
+            busy += 1;
+            continue;
+        }
+        if unique_work(&worktree.path, &base).await.is_some() {
+            holding_work += 1;
             continue;
         }
         if kept < keep {
@@ -838,6 +956,7 @@ pub(crate) async fn clean_up(
         }
         let unused_for = now.duration_since(worktree.last_used).unwrap_or_default();
         if unused_for < remove_after {
+            recent += 1;
             continue;
         }
         if let Some(reason) = removal_loses(&worktree.path, primary).await {
@@ -845,6 +964,7 @@ pub(crate) async fn clean_up(
                 "keeping the unused worktree {}: {reason}",
                 worktree.path.display()
             );
+            irreplaceable += 1;
             continue;
         }
         if let Some(gone) = remove(&worktree, primary, &base, &in_use).await {
@@ -856,6 +976,14 @@ pub(crate) async fn clean_up(
             removed.push(gone);
         }
     }
+    log::info!(
+        "worktree cleanup of {}: removed {} of {total}; kept {busy} in use, {holding_work} \
+         holding work, {kept} for new tabs, {recent} used in the last {} days, \
+         {irreplaceable} with files that can't be made again",
+        primary.display(),
+        removed.len(),
+        remove_after.as_secs() / 86_400
+    );
     remove_merged_generated_branches(primary, &base).await;
     removed
 }
