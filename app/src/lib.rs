@@ -2195,15 +2195,23 @@ pub(crate) fn initialize_app(
         aliases.connect(ctx);
     });
 
-    // When running natively, add the http server singleton to the application.
+    // When running natively, add the loopback http server singleton to the application. It serves
+    // warp.dev's install detection and, in profiling builds, heap dumps. Backend-free builds have
+    // no website that needs to detect an install, and any page a user visits can probe an open
+    // loopback port to learn the app is running, so they start the server only to serve profiling.
     #[cfg(not(target_family = "wasm"))]
-    ctx.add_singleton_model(move |ctx| {
-        let routers = vec![
-            app_installation_detection::make_router(),
-            profiling::make_router(),
-        ];
-        http_server::HttpServer::new(routers, ctx)
-    });
+    {
+        let has_backend = ChannelState::has_backend();
+        if has_backend || cfg!(feature = "jemalloc_pprof") {
+            ctx.add_singleton_model(move |ctx| {
+                let mut routers = vec![profiling::make_router()];
+                if has_backend {
+                    routers.push(app_installation_detection::make_router());
+                }
+                http_server::HttpServer::new(routers, ctx)
+            });
+        }
+    }
     #[cfg(feature = "local_fs")]
     if matches!(
         launch_mode,

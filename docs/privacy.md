@@ -79,9 +79,11 @@ lsof -nP -i -a -p "$(ps -Ao pid,comm | awk '/Clinch.app\/Contents\/MacOS\/stable
 
 Expected results: the two `grep` commands match nothing, `ls` reports that no `Frameworks`
 directory exists, and `codesign` prints an empty `<dict/>`. Most of the time `lsof` shows only
-`LISTEN` sockets on `127.0.0.1`, which accept connections from your own Mac and never reach the
-network, plus GitHub connections around an hourly update check. Nothing should ever resolve to a
-Warp service or an analytics host.
+`LISTEN` sockets on `127.0.0.1`: the token-authenticated local control endpoint (while **Local
+control** is on) and Remote Control's gateway (while Remote Control is on, which Tailscale Serve
+exposes to your own tailnet and nowhere else). Around an hourly update check you
+may also see GitHub connections. Nothing should ever resolve to a Warp service or an analytics
+host, and Clinch does not open Warp's install-detection port (9277) that websites could probe.
 
 These invariants are also locked by tests in
 [`config_tests.rs`](../crates/warp_core/src/channel/config_tests.rs): a change that reintroduced a
