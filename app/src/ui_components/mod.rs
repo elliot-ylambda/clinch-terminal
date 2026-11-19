@@ -16,6 +16,7 @@ pub(crate) mod menu_button;
 pub(crate) mod red_notification_dot;
 pub(crate) mod render_file_search_row;
 pub mod tab_selector;
+pub(crate) mod text_width;
 pub(crate) mod window_focus_dimming;
 
 pub use warp_core::ui::icons;

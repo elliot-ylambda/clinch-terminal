@@ -33,11 +33,11 @@ use warpui::elements::{
     Padding, ParentAnchor, ParentElement, ParentOffsetBounds, PositionedElementAnchor,
     PositionedElementOffsetBounds, Radius, Resizable, ResizableStateHandle, SavePosition,
     ScrollTarget, ScrollToPositionMode, ScrollbarWidth, Shrinkable, SizeConstraintCondition,
-    SizeConstraintSwitch, Stack, Text, DEFAULT_UI_LINE_HEIGHT_RATIO,
+    SizeConstraintSwitch, Stack, Text,
 };
 use warpui::fonts::{Properties, Weight};
-use warpui::platform::{Cursor, LineStyle};
-use warpui::text_layout::{ClipConfig, StyleAndFont, TextStyle, DEFAULT_TOP_BOTTOM_RATIO};
+use warpui::platform::Cursor;
+use warpui::text_layout::ClipConfig;
 use warpui::ui_components::components::{UiComponent, UiComponentStyles};
 use warpui::ui_components::text_input::TextInput;
 use warpui::units::IntoPixels;
@@ -84,6 +84,7 @@ use crate::ui_components::agent_icon::{
 use crate::ui_components::buttons::{combo_inner_button, icon_button_with_color};
 use crate::ui_components::icon_with_status::{render_icon_with_status, IconWithStatusVariant};
 use crate::ui_components::icons::Icon as UiIcon;
+use crate::ui_components::text_width::ui_text_width;
 use crate::util::bindings::keybinding_name_to_display_string;
 use crate::util::color::Opacity;
 use crate::workspace::action::{NewSessionMenuAnchor, WorkspaceAction};
@@ -1539,29 +1540,16 @@ fn foot_button_label_properties() -> Properties {
 /// The width a foot button needs to show its whole label: padding, icon, gap and the label as
 /// laid out in the UI font.
 fn foot_button_natural_width(label: &str, appearance: &Appearance, app: &AppContext) -> f32 {
-    let line = app.font_cache().text_layout_system().layout_line(
-        label,
-        LineStyle {
-            font_size: FOOT_BUTTON_LABEL_FONT_SIZE,
-            line_height_ratio: DEFAULT_UI_LINE_HEIGHT_RATIO,
-            baseline_ratio: DEFAULT_TOP_BOTTOM_RATIO,
-            fixed_width_tab_size: None,
-        },
-        &[(
-            0..label.chars().count(),
-            StyleAndFont::new(
-                appearance.ui_font_family(),
-                foot_button_label_properties(),
-                TextStyle::new(),
-            ),
-        )],
-        f32::MAX,
-        ClipConfig::default(),
-    );
     2. * FOOT_BUTTON_HORIZONTAL_PADDING
         + FOOT_BUTTON_ICON_SIZE
         + FOOT_BUTTON_ICON_LABEL_GAP
-        + line.width
+        + ui_text_width(
+            label,
+            FOOT_BUTTON_LABEL_FONT_SIZE,
+            foot_button_label_properties(),
+            appearance,
+            app,
+        )
 }
 
 /// Shows `tooltip` above a hovered sidebar foot button.
@@ -1597,12 +1585,11 @@ fn render_foot_button(
     let icon = button.icon;
     let is_open = button.is_open;
     let popover = button.popover;
-    let label = if compact {
-        button.compact_label.clone()
+    let (label, tooltip) = if compact {
+        (button.compact_label.clone(), Some(button.label.clone()))
     } else {
-        Some(button.label.clone())
+        (Some(button.label.clone()), None)
     };
-    let tooltip = compact.then(|| button.label.clone());
     let hoverable = Hoverable::new(button.mouse_state.clone(), move |hover_state| {
         let mut content = Flex::row()
             .with_main_axis_size(MainAxisSize::Max)
@@ -1703,15 +1690,19 @@ fn render_sidebar_foot(
 ) -> Box<dyn Element> {
     let appearance = Appearance::as_ref(app);
     let task_count = workspace.tasks.len();
+    let (tasks_label, tasks_compact_label) = if task_count == 0 {
+        ("Tasks".to_string(), None)
+    } else {
+        (
+            format!("Tasks · {task_count}"),
+            Some(task_count.to_string()),
+        )
+    };
     let buttons = [
         FootButton {
             icon: WarpIcon::Check,
-            label: if task_count == 0 {
-                "Tasks".to_string()
-            } else {
-                format!("Tasks · {task_count}")
-            },
-            compact_label: (task_count > 0).then(|| task_count.to_string()),
+            label: tasks_label,
+            compact_label: tasks_compact_label,
             popover: SidebarPopover::Tasks,
             is_open: state.open_popover == Some(SidebarPopover::Tasks),
             mouse_state: state.tasks_link_mouse_state.clone(),
@@ -1735,6 +1726,7 @@ fn render_sidebar_foot(
     // label that exactly fits.
     let full_labels_width = natural_widths.iter().sum::<f32>()
         + FOOT_NEW_SECTION_BUTTON_WIDTH
+        // One gap after each labeled button, before the next button or the "+".
         + FOOT_BUTTON_SPACING * buttons.len() as f32
         + 1.;
     let render_row = |compact: bool| {

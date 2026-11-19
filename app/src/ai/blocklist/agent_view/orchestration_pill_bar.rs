@@ -25,13 +25,10 @@ use warpui::elements::{
     MainAxisAlignment, MainAxisSize, MouseStateHandle, OffsetPositioning, OffsetType, ParentAnchor,
     ParentElement, ParentOffsetBounds, PositionedElementOffsetBounds, PositioningAxis, Radius,
     SavePosition, ScrollbarWidth, Stack, Text, XAxisAnchor, YAxisAnchor,
-    DEFAULT_UI_LINE_HEIGHT_RATIO,
 };
 use warpui::fonts::{Properties, Weight};
-use warpui::platform::{Cursor, LineStyle};
-use warpui::text_layout::{
-    ClipConfig, ClipDirection, ClipStyle, StyleAndFont, TextStyle, DEFAULT_TOP_BOTTOM_RATIO,
-};
+use warpui::platform::Cursor;
+use warpui::text_layout::{ClipConfig, ClipDirection, ClipStyle};
 use warpui::{
     AppContext, Entity, EntityId, ModelHandle, SingletonEntity, TypedActionView, View, ViewContext,
     ViewHandle,
@@ -70,6 +67,7 @@ use crate::ui_components::icon_with_status::{
     StatusBadgeStyle,
 };
 use crate::ui_components::icons::Icon;
+use crate::ui_components::text_width::ui_text_width;
 use crate::workspace::WorkspaceAction;
 
 const PILL_HEIGHT: f32 = 22.;
@@ -223,40 +221,6 @@ fn overflow_button_position_id(conversation_id: AIConversationId) -> String {
 /// pills don't fight over the same id.
 fn pill_body_position_id(conversation_id: AIConversationId) -> String {
     format!("orchestration-pill-body-{conversation_id}")
-}
-
-fn pill_label_width(
-    label: &str,
-    font_properties: Properties,
-    appearance: &Appearance,
-    app: &AppContext,
-) -> f32 {
-    if label.is_empty() {
-        return 0.;
-    }
-
-    let font_cache = app.font_cache();
-    let text_layout_system = font_cache.text_layout_system();
-    let line = text_layout_system.layout_line(
-        label,
-        LineStyle {
-            font_size: appearance.monospace_font_size() - 1.,
-            line_height_ratio: DEFAULT_UI_LINE_HEIGHT_RATIO,
-            baseline_ratio: DEFAULT_TOP_BOTTOM_RATIO,
-            fixed_width_tab_size: None,
-        },
-        &[(
-            0..label.chars().count(),
-            StyleAndFont::new(
-                appearance.ui_font_family(),
-                font_properties,
-                TextStyle::new(),
-            ),
-        )],
-        f32::MAX,
-        ClipConfig::default(),
-    );
-    line.width
 }
 
 /// Width of the per-pill hover details card.
@@ -1775,23 +1739,21 @@ fn render_pill(
             weight: Weight::Normal,
             ..Default::default()
         };
+        let label_font_size = appearance.monospace_font_size() - 1.;
         // At rest, labels use the full budget. When dots are visible, keep
         // the rest-state slot width but reserve its trailing slice so the
         // overlay does not cover glyphs or shift sibling pills.
         let hover_label_slot_width = show_dots.then(|| {
-            pill_label_width(&label, label_style, appearance, app).min(PILL_LABEL_MAX_WIDTH)
+            ui_text_width(&label, label_font_size, label_style, appearance, app)
+                .min(PILL_LABEL_MAX_WIDTH)
         });
 
-        let label_text = Text::new(
-            label,
-            appearance.ui_font_family(),
-            appearance.monospace_font_size() - 1.,
-        )
-        .with_color(text_color)
-        .soft_wrap(false)
-        .with_clip(ClipConfig::ellipsis())
-        .with_style(label_style)
-        .finish();
+        let label_text = Text::new(label, appearance.ui_font_family(), label_font_size)
+            .with_color(text_color)
+            .soft_wrap(false)
+            .with_clip(ClipConfig::ellipsis())
+            .with_style(label_style)
+            .finish();
 
         let label_element = if let Some(label_slot_width) = hover_label_slot_width {
             let clipped_label_width = (label_slot_width - OVERFLOW_BUTTON_LABEL_RESERVE).max(0.);
