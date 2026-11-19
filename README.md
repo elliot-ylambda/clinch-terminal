@@ -9,398 +9,79 @@
 </p>
 
 <p align="center">
-  Keep projects, panes, and AI coding sessions organized—and return to the conversation,
-  not just the directory.
-</p>
-
-<p align="center">
   <a href="https://clinch.sh"><strong>Website</strong></a> ·
   <a href="#install"><strong>Install</strong></a> ·
-  <a href="#remote-control-beta"><strong>Remote Control</strong></a> ·
   <a href="https://clinch.sh/docs"><strong>Docs</strong></a> ·
   <a href="https://github.com/elliot-ylambda/clinch-terminal/releases"><strong>Releases</strong></a>
 </p>
 
 <p align="center">
-  <sub>macOS 14+ · Apple Silicon · free and open source · no account ·
-  <a href="#privacy-and-network-behavior"><strong>no telemetry</strong></a> ·
-  <a href="#public-preview">public preview</a></sub>
+  <sub>macOS 14+ · Apple Silicon · free and open source · no account · no telemetry</sub>
 </p>
 
 ---
 
-Clinch is an independent AGPL fork of Warp designed for people who keep several AI coding threads
-moving at once. Project tabs keep terminal tabs, splits, working directories, panels, and local
-agent state grouped as durable workspaces. With session capture enabled, Clinch can reopen a
-recoverable Claude Code, Codex or Devin conversation in the pane that owned it.
+Clinch is a terminal for running several AI coding agents at once. It is an open-source fork of
+Warp with the account, cloud features, and telemetry taken out.
 
-The stable app runs without a Clinch or Warp account and without a configured Warp backend,
-telemetry destination, or crash reporter. Clinch keeps its own UI configuration, so it can run
-alongside Warp without inheriting Warp's settings.
-
-## Why Clinch
-
-- **Pick up where the agent left off.** Reopen captured Claude Code, Codex and Devin conversations
-  in their original panes when the provider can still recover them.
-- **Keep parallel projects separate.** Preserve project order, working directories, terminal
-  tabs, splits, and panels—and move live tabs between projects or windows.
-- **See what needs attention.** Local agent-status badges and macOS notifications help surface a
-  waiting or completed agent without sending Clinch telemetry.
-- **Stay close to the work.** Browse skills and files, preview common image formats, and monitor
-  optional Claude plan limits without leaving the terminal.
-- **Reach it from your phone.** [Remote Control](#remote-control-beta) (beta) lets you check and
-  answer the sessions already running on your Mac from Safari on your phone, over your own
-  Tailscale network. Off until you turn it on.
-- **Stay local-first.** No telemetry, no analytics, no crash reporting, no account. Clinch
-  collects nothing about you or your work, and the only thing it reaches for on its own is an
-  hourly-at-most update check against this repository—which you can turn off. See
-  [Privacy and network behavior](#privacy-and-network-behavior)—including how to verify it
-  yourself.
+- **Pick up where you left off.** After a restart, Claude Code, Codex, and Devin conversations
+  reopen in the pane they were in.
+- **Keep projects apart.** Each project keeps its own tabs, splits, and folders.
+- **See who needs you.** Tab badges and notifications show when an agent is waiting or done.
+- **Answer from your phone.** Optional [Remote Control](#remote-control-beta) over your own
+  Tailscale network.
+- **Stay private.** No account, analytics, or crash reporting. See [Privacy](#privacy).
 
 ## Install
 
-Copy this into your terminal to download and install Clinch:
-
 ```bash
 curl -fsSL https://clinch.sh/install | sh
 ```
 
-The URL redirects to the authenticated `install.sh` asset on the latest versioned release. The
-script authenticates the signed release manifest with a Clinch release key embedded in the
-reviewed script. It resolves one exact tag, verifies the archive size and SHA-256, bundle ID,
-version, minimum macOS version, the Apple Silicon architecture, and structural code signature,
-then stages the app in `/Applications` or `~/Applications` and opens it (pass `--no-open` to
-skip launching). It does not configure Claude Code or Codex, install plugins, request
-administrator access, or change Gatekeeper. Command-line downloads carry no browser quarantine
-flag, so Gatekeeper does not block the first launch and no System Settings approval is needed.
-To read the script before running it, download `install.sh` from a versioned release, inspect
-it, then run `sh install.sh`.
+The script checks the release signature before it installs Clinch to `/Applications`. Clinch then
+updates itself: **Update** appears in the header, and nothing installs until you click it.
 
-### Manual verification
+To verify the download by hand, or for Intel Macs, see [Install, update, and remove](docs/install.md).
 
-Every current versioned release on the
-[Clinch releases page](https://github.com/elliot-ylambda/clinch-terminal/releases) also ships
-the artifacts to verify and install by hand. Download `Clinch.dmg`, plus `Clinch.source.tar.gz`,
-`Clinch.checksums.txt`, and `Clinch.checksums.sshsig` from the same release. The source archive is
-the version-matched Complete Corresponding Source, including every locked Cargo dependency.
-Authenticate the checksum list with the Clinch release key, then verify the disk image and source
-archive before opening or extracting them:
+## Privacy
 
-```bash
-printf '%s\n' 'clinch-release ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGr+qT8+Fx8TjATDpWlhzzfbL08AsS1EXbaaOUBi0wJp' > /tmp/clinch-allowed-signers
-ssh-keygen -Y verify -f /tmp/clinch-allowed-signers -I clinch-release -n clinch-checksums \
-  -s Clinch.checksums.sshsig < Clinch.checksums.txt
-shasum -a 256 Clinch.dmg
-grep ' Clinch.dmg$' Clinch.checksums.txt
-shasum -a 256 Clinch.source.tar.gz
-grep ' Clinch.source.tar.gz$' Clinch.checksums.txt
-```
+Clinch collects nothing and does not talk to Warp's servers. The only request it makes on its own
+is an update check against GitHub, at most once an hour.
 
-Releases ship for Apple Silicon only. The installer refuses an Apple Silicon-only release on an
-Intel Mac before downloading anything and names the last Intel release, which it can still install
-with `--version`.
-
-`ssh-keygen` must report a good signature, and each printed digest must match its authenticated
-entry. Open the DMG and drag
-`Clinch.app` to Applications. A browser download is quarantined and the preview is not notarized,
-so macOS will block the first launch: try once, then approve Clinch under **System Settings →
-Privacy & Security → Open Anyway**. Do not disable Gatekeeper globally. Clinch's installer and
-documentation do not remove `com.apple.quarantine`.
-
-Clinch uses the bundle ID `sh.clinch.Clinch` and keeps its UI configuration in `~/.clinch`, so it
-can coexist with Warp without inheriting Warp's theme, zoom, keybindings, or other app settings.
-
-## Session restore is enabled by default
-
-Clinch can reopen a captured Claude Code, Codex or Devin conversation in the pane that owned it. This
-requires provider hooks, so Clinch enables its local session-capture integration on first launch.
-You can turn it off or back on at any time from **Clinch Settings → Agents → Claude Code, Codex and
-Devin session capture**.
-
-While session capture is enabled, Clinch:
-
-- adds clearly marked managed hooks to `~/.claude/settings.json`, `~/.codex/config.toml` and
-  `~/.config/devin/config.json`, leaving a Devin config with comments untouched;
-- installs Clinch-owned helper files in `~/.warp/agent-resume-bin/`; and
-- stores local pane mappings, a journal, and prompt mirrors in `~/.warp/agent-resume/`, including
-  Devin's final replies because its own history has no documented format; and
-- records the enabled/disabled preference and a hash/mode receipt under
-  `~/Library/Application Support/sh.clinch.Clinch/agent-integration/`.
-
-Clinch repairs those managed entries on later launches only while the setting is enabled. Turning
-it off persists the opt-out and deletes its hooks and helper files while preserving unrelated
-provider configuration and captured metadata. Purging captured metadata is a separate action. The
-command-line equivalents are:
-
-```bash
-bash tools/agent-resume/install.sh enable
-bash tools/agent-resume/install.sh disable
-bash tools/agent-resume/install.sh purge
-```
-
-Notification plugins are separate from session capture. Clinch ships pinned snapshots of the
-Warp notification plugins for Claude Code and Codex and best-effort installs them into the
-provider-owned user plugin stores on launch when those CLIs are present. The payload is local to
-the Clinch app and uses dedicated Clinch marketplace IDs, so installation neither clones a plugin
-repository nor replaces other Warp/Oz marketplace plugins. The app also puts a pinned universal
-`jq` on each local pane's `PATH`, satisfying the plugins' runtime dependency without Homebrew.
-Missing CLIs and provider policy failures do not block launch and are retried later. Use
-`./uninstall.sh --remove-plugins` when you want to remove the provider plugins as well as Clinch.
-
-Conversation recovery is best-effort. Clinch starts a new provider process with a resume command;
-it does not preserve a live process through quit, crash, or reboot. Provider retention, invalid or
-deleted transcripts, changed CLIs, and abrupt power loss can prevent an exact restore.
-
-A session that was mid-turn when Clinch stopped, working or waiting on a permission prompt or a
-question, comes back first and is told to continue where it left off and to check before repeating
-anything with outside effects. Anything still running in that session's process, such as a command
-or a background subagent, ended with it. Clinch skips the prompt if you typed in the pane first, and
-ignores a record more than 24 hours old. Turn this off with **Settings → Clinch → Continue running
-sessions after a restart**.
-
-Every other session comes back asleep: its tab, title and conversation are there, and its agent
-does not start until you press **Wake**, on its row in the tab list or on the card over the tab, or
-something sends to it. An asleep tab shows a moon. This keeps a launch from starting dozens of
-agents you may not use; an idle Claude Code session holds about 700 MB.
-
-### Sleeping tabs
-
-A Claude Code or Codex tab you are not using can sleep while Clinch runs, too. Clinch stops the
-agent and its helper processes, and keeps the tab. Waking it runs the same resume command a
-restart does, so the conversation picks up where it stopped.
-
-- Right-click a tab and choose **Sleep**, or **Sleep idle sessions** for the project or for every
-  project.
-- Wake one with the **Wake** button on its row, which leaves you where you are, or on the card
-  over the tab, which shows the agent and the tab's title. Going to an asleep tab doesn't wake it,
-  and it takes no typing until it's awake.
-- Tabs you have not used for a day (24 hours) sleep on their own. Change the time or turn this
-  off with **Settings → Clinch → Put idle sessions to sleep after**.
-- A session never sleeps while it is working, waiting on you, running a background shell, monitor
-  or subagent, or holding a message you have not sent. The Coordinator and the tab on screen do
-  not sleep on their own.
-
-More implementation detail is in
-[tools/agent-resume/README.md](tools/agent-resume/README.md).
-
-## Remote Control (Beta)
-
-Answer the agents already running on your Mac from your phone. Type a line in Safari and it runs
-in the Clinch pane that owns that session—no Clinch account, no hosted relay, and no terminal
-traffic through clinch.sh.
-
-- **Your Mac stays the host.** Nothing executes anywhere else. The phone is a view and a keyboard
-  onto the sessions that are already open, and the Mac has to be awake, online, and running Clinch.
-- **Private transport.** The connection runs over your own Tailscale network. That requires
-  Tailscale on both devices and a Tailscale account; Clinch itself still needs no sign-in.
-- **Safari-first.** The phone client is a web app you can add to the Home Screen. There is no iOS
-  app, and none is planned.
-- **Approved devices only.** Pair with a single-use QR invitation that expires in five minutes and
-  approve the phone on the Mac. A paired phone stays authorized until you revoke it or it goes 90
-  days without connecting.
-
-Remote Control is **off until you turn it on**. Open **Settings → Clinch → Remote Control**, or
-click the phone button in the window header, for guided setup and the pairing checklist.
-
-Beta means the protocol, pairing, and revocation model are settled and shipping in the current
-release, while real-device hardening continues. Report anything that misbehaves in
-[Issues](https://github.com/elliot-ylambda/clinch-terminal/issues). Full setup and threat model:
-[clinch.sh/remote-control](https://clinch.sh/remote-control).
-
-## Public preview
-
-Clinch is distributed as an **unnotarized public preview**. The app is signed with Clinch's own
-self-signed certificate and the macOS hardened runtime, but it has no Apple-issued Developer ID and
-Apple has not notarized it. macOS may block the first launch. That warning is expected and is not
-evidence that Apple has reviewed the app. Releases use the same signing identity so privacy
-permissions you grant Clinch, such as Screen Recording, can survive updates. Upgrading from an
-older signing identity may require the one-time repair described below.
-
-This repository has automated security checks and a documented release process. It has not had an
-independent security audit. See [SECURITY.md](SECURITY.md) for the trust model and known limits.
-
-## Computer use permissions on macOS
-
-Ordinary terminal use does not require Screen Recording or Accessibility. Grant them when an
-agent such as Claude Code asks to see your screen or control other apps. In-app instructions and
-links to the macOS permission panes are under **Clinch Settings → Computer use → Setup and
-troubleshooting**. Opening the guide does not request or change permissions.
-
-For a new installation:
-
-1. Open **System Settings → Privacy & Security → Accessibility** and enable **Clinch**. This
-   allows the agent to click, type, and scroll in other apps.
-2. Open **Screen & System Audio Recording** (called **Screen Recording** on older macOS versions)
-   and enable **Clinch** in the screen-recording list, not the audio-only list. This allows the
-   agent to see your screen. If Clinch is missing from either pane, use **+** to add the copy you
-   run, normally `/Applications/Clinch.app`.
-3. Quit and reopen Clinch, resume your agent, and retry computer use. In Claude Code, choose
-   **Try again** if its permission prompt is still open.
-
-### Permissions are enabled, but the agent still reports access denied
-
-Older Clinch builds used ad-hoc or Apple Development signing. When upgrading to the current
-**Clinch Code Signing** identity, macOS can retain permission entries for the old identity.
-Both switches may appear enabled even though access is denied. Toggling them or restarting alone
-may not replace the stale entries.
-
-1. Save your work and quit Clinch.
-2. In **each** permission pane above, select **Clinch** and click **−** to remove its entry.
-3. Click **+**, select the current `/Applications/Clinch.app` (or the actual copy you run), and
-   enable it. Repeat for both Accessibility and Screen Recording.
-4. Reopen Clinch, resume your agent, and retry computer use.
-
-Only remove Clinch's entries. **Clinch Dev** is a separate app with separate permissions; grant
-access to the app you actually run. Once granted to the current release identity, permissions
-should carry across releases that retain that identity. This repair does not grant an agent
-access to individual apps within its own computer-use approval flow.
-
-## Privacy and network behavior
-
-**Clinch has no telemetry, no analytics, no crash reporting, and no account.** It does not
-collect or transmit anything about you, your commands, your files, or how you use the app. No
-usage data, no event stream, and no identifier ever leaves your machine. This is a property of
-how the app is built, not a preference you have to find and switch off.
-
-The stable channel is created by
-[`ChannelConfig::clinch()`](crates/warp_core/src/channel/config.rs), which ships
-`telemetry_config: None`, `crash_reporting_config: None`, and no bundled MCP credentials. Every
-inherited Warp backend URL—application server, real-time server, and Oz—is replaced with an
-unroutable [RFC 5737](https://www.rfc-editor.org/rfc/rfc5737) black-hole address rather than
-merely left unused, so no code path can deliver data to a Warp service even by accident. Account
-login, onboarding, Warp Drive, session sharing, and Warp's own AI are gated behind
-`ChannelState::has_backend()` and are inert. Every telemetry entry point—including the innermost
-send—returns early when telemetry is unavailable, so the runtime schedules no telemetry task,
-writes no queue to disk, and deletes stale Clinch telemetry queues without uploading them.
-
-The shipped binary links no crash-reporting framework and contains no RudderStack destination,
-Sentry DSN, or analytics SDK. The bundle requests no entitlements at all, and carries no
-privileged update authorizer.
-
-### What talks to the network
-
-| Activity | Runs when | Destination |
+| What | When | Where it goes |
 | --- | --- | --- |
-| Update check | Automatically, at most once an hour — **and you can turn it off** | `api.github.com`, this repository's releases |
-| Update download | Only after you approve the update | GitHub release assets |
-| Plan-limit gauges | **Off by default**; only if you enable them in Settings | `api.anthropic.com` for Claude. For Codex, your installed `codex app-server` asks its own service using your Codex login |
-| [Remote Control](#remote-control-beta) | **Off by default**; only while you have it enabled | Your own tailnet, phone to Mac — no Clinch relay |
-| Language servers, MCP servers, remote assets | Only when you start them | Wherever you point them |
-| Claude Code, Codex, Devin, SSH, package tooling | Only when you run them | Their own services |
+| Update check | At most hourly; you can turn it off | GitHub |
+| Plan-limit gauges | Off unless you turn them on | Anthropic, or your own `codex` CLI |
+| Remote Control | Off unless you turn it on | Your own Tailscale network |
+| Agents, SSH, language servers, MCP | Only when you run them | Their own services |
 
-An update check uses ordinary HTTPS GETs for the release feed, manifest, and signature. Clinch
-attaches no unique identifier, machine fingerprint, installed version, operating-system version,
-or usage data to them, and it downloads no app archive until you approve the update. GitHub
-necessarily sees ordinary transport metadata such as the requesting IP address and time. Clinch
-records an automatic check before sending it, so successes, failures, cancellations, and app
-restarts are all capped at one check per hour.
+Turn off the update check in **Settings → Clinch → Updates**. For the details and how to check
+all of this yourself, see [Privacy](docs/privacy.md).
 
-**To make Clinch issue no automatic network requests at all**, turn off **Settings → Clinch →
-Updates → Check for updates automatically**. Checking on demand from **Clinch → Check for
-Updates…** keeps working, so turning this off does not strand you on an old build. The equivalent
-without opening the GUI:
+## Session restore
 
-```bash
-# In ~/.warp/settings.toml
-[clinch.updates]
-automatic_check = false
+Clinch adds hooks to Claude Code, Codex, and Devin so it can reopen their conversations after a
+restart. A session that was mid-task picks up where it stopped; the rest come back asleep until you
+click **Wake**. Turn this off in **Settings → Agents**. More in [Sessions](docs/sessions.md).
 
-# Or per-launch, which overrides the setting
-CLINCH_NO_UPDATE_CHECK=1 open -a Clinch
-```
+## Remote Control (beta)
 
-Software you launch inside Clinch is outside this statement. Provider CLIs, MCP servers, SSH, and
-package tooling reach their own services under your own accounts, with their own privacy behavior.
+Check on and reply to your running agents from Safari on your phone. Your Mac stays the host, and
+the connection runs over your own Tailscale network, with no Clinch account or relay. It is off
+until you turn it on in **Settings → Clinch → Remote Control**. More in
+[Remote Control](docs/remote-control.md).
 
-### Verify it yourself
+## Good to know
 
-None of the above has to be taken on trust:
+- **Public preview.** Clinch is signed but not notarized by Apple, and it has not had an
+  independent security audit. See [SECURITY.md](SECURITY.md).
+- **Computer use** needs the Accessibility and Screen Recording permissions.
+  [Setup and fixes](docs/install.md#computer-use-permissions-on-macos).
+- **Uninstall** with `bash uninstall.sh` from any release.
+  [Options](docs/install.md#uninstall).
+- **Runs alongside Warp.** Clinch keeps its own settings in `~/.clinch`.
 
-```bash
-# No crash reporter linked, and no bundled frameworks at all
-otool -L /Applications/Clinch.app/Contents/MacOS/stable | grep -i sentry
-ls /Applications/Clinch.app/Contents/Frameworks
-
-# No analytics destination or crash-reporting DSN compiled in
-strings -a /Applications/Clinch.app/Contents/MacOS/stable \
-  | grep -Ei 'rudderstack\.com|ingest\.sentry\.io|segment\.io|amplitude\.com'
-
-# No entitlements requested (prints an empty <dict/>)
-codesign -d --entitlements - /Applications/Clinch.app
-
-# Every socket the running app holds open
-lsof -nP -i -a -p "$(ps -Ao pid,comm | awk '/Clinch.app\/Contents\/MacOS\/stable/{print $1; exit}')"
-```
-
-Expected results: the two `grep` commands match nothing, `ls` reports that no `Frameworks`
-directory exists, `codesign` prints an empty `<dict/>`, and `lsof` shows no sockets most of the
-time—only GitHub connections around an hourly update check. Nothing should ever resolve to a Warp
-service or an analytics host.
-
-These invariants are also locked by tests in
-[`config_tests.rs`](crates/warp_core/src/channel/config_tests.rs): a change that reintroduced a
-telemetry destination, a crash reporter, or a live backend URL fails the build.
-
-Session-capture data stays in local Clinch-owned files. Claude Code, Codex and Devin continue to
-manage their own transcripts and credentials. Clinch does not delete provider transcripts or Keychain
-credentials during uninstall.
-
-Clinch launches the provider CLIs with their existing sign-ins. On macOS, Clinch's own Keychain
-access never opens a password dialog. The optional Claude plan meter uses the existing Claude
-Code login only when macOS permits a silent read; **Retry** follows the same rule. If access is
-unavailable, plan limits remain unavailable while local transcript statistics and agent sessions
-continue to work. The provider CLIs still control their own authentication flows.
-
-Blocked Keychain access does not erase saved data or create replacement credentials. Local control
-is managed in **Clinch Settings → Local control**, including the optional command installation for
-other terminals. Clinch stores that non-secret choice in an owner-only local file, so app-signature
-changes cannot make it unreadable. New installs default to enabled, and readable legacy Keychain
-choices (including disabled) migrate automatically. If the old Keychain choice is unreadable or
-invalid, the upgrade saves Clinch's enabled default without changing the legacy entry; no manual
-toggle is needed. An existing local preference always takes precedence, and local file errors
-leave control off rather than replacing a saved choice.
-
-Remote Control still remains disabled when its saved authorization cannot be read. Stable app
-signing is needed to preserve Keychain trust across updates; suppressing dialogs does not grant
-access to an entry that trusts an older build.
-
-## Updates and removal
-
-Updater-enabled builds check automatically and show **Update** in the header. You can also choose
-**Clinch → Check for Updates…**. Either way, Clinch authenticates the release and a small pop-up
-asks before anything is installed. **Update** then shows a progress bar while it downloads and
-verifies the archive, saves restorable state, quits, atomically replaces the app, reopens, and
-rolls back if the new app does not start. Sessions that were running reopen and continue; see
-[Session restore](#session-restore-is-enabled-by-default). The pop-up also says which other running
-commands will stop.
-
-The updater never requests administrator privileges. The public installer places Clinch in a
-user-writable `/Applications` or `~/Applications` location; unusual non-writable installations
-open the authenticated release for manual installation instead. Builds released before the updater
-bridge in `v0.2026.07.20.1643` need one final bootstrap install:
-
-```bash
-curl -fsSL https://clinch.sh/install | sh
-```
-
-Apple Silicon installations update automatically. Intel installations stay on the last Intel
-release: an Apple Silicon-only manifest lists only `arm64`, so the installer refuses it on Intel, and
-current updaters do not offer it there. Updaters older than that check still offer it, but its
-download then fails the architecture check before anything is installed.
-
-The release asset `uninstall.sh` supports selective removal:
-
-```bash
-bash uninstall.sh                         # app only
-bash uninstall.sh --disable-integration  # app plus managed hooks/helpers
-bash uninstall.sh --purge-capture        # also remove captured metadata
-bash uninstall.sh --purge-app-data       # also remove Clinch preferences/cache/state
-```
-
-Run `bash uninstall.sh --help` for combinations. It never removes all of `~/.warp`, provider
-transcripts, or Keychain credentials.
-
-## Build and verify from source
+## Build from source
 
 ```bash
 ./script/bootstrap
@@ -409,136 +90,11 @@ transcripts, or Keychain credentials.
 make candidate
 ```
 
-`script/launch-check` covers formatting, installer/integration/update-format tests, the stable
-build, component tests, Clippy, dependency license policy, bundled notices, and advisories. It
-checks licenses and advisories first, because the advisory database is a live feed that can fail an
-unchanged commit. `./script/launch-check --quick` skips the build, Rust tests, Clippy, and
-advisories; it is the check every pull request runs on GitHub Actions. `make candidate` builds and
-verifies the native Apple Silicon app, ZIP, and DMG, both manifest signatures, minimum OS,
-entitlements, default-on/opt-out flow, and the ZIP/DMG app pair. It does not create a tag or
-release.
+Testing, releases, and cleanup tools: [Building, releasing, and maintenance](docs/development.md).
 
-Releases are Apple Silicon only by default. Build Intel only when it is explicitly wanted:
-`INTEL=1` adds a separate native Intel app, ZIP, and DMG, and `UNIVERSAL=1` ships one legacy fat
-app instead. Both work with `make candidate` and `make release`. Builds and the gate run under
-`nice` (`RELEASE_NICE`, default 10) so the Mac stays responsive.
-
-Release builds use the persistent local Cargo cache instead of paid hosted macOS runners. Install
-the normal build/test/release dependencies plus OpenSSL 3 and Syft (`brew install openssl@3 syft`)
-before the first release; `make release` checks every required command, signing key, and at least
-40 GiB of free space before starting the expensive gate.
-
-Run `make release` from a clean, current `main` checkout. It selects the next version, records the
-exact commit, and creates a detached worktree pinned to that commit at a stable per-repository path.
-The worktree uses the dedicated `target/release-worktree-cache/` directory, and its stable source
-path keeps incremental Cargo fingerprints reusable across releases without conflicting with normal
-development builds. Edits made in the caller's checkout after the release starts cannot dirty or
-change the release source. The command runs the full local
-gate, builds and verifies the native Apple Silicon artifacts (and Intel ones with `INTEL=1`),
-generates a CycloneDX SBOM for each app, a vendored
-offline-buildable Corresponding Source archive, and signed local provenance, then assembles the
-exact signed asset set under `target/release-worktree-cache/release-stage/<version>/`.
-The release-only Nextest profile permits up to 120 seconds for macOS UI tests whose first system-font
-scan can consume most of the stricter 60-second local timeout; test assertions and selection are
-unchanged.
-After a version-and-commit-specific publication confirmation,
-it pushes the signed tag, creates or refreshes a private draft release, downloads the uploaded
-assets into a fresh directory, verifies them again, and publishes the draft. The command does not
-require or record a manual QA attestation. A running installation discovers the release on its
-next at-most-hourly check; choose **Clinch → Check for Updates…** to refresh immediately without
-resetting the automatic privacy cadence. Advanced users can override `VERSION`.
-
-Release publication runs no GitHub Actions job. Immediately before publication, the local command
-rechecks the signed remote tag, current `main`, both manifest signatures, exact asset set and
-digests, SBOM, validation record, local provenance, and monotonic update sequence. It also rejects
-a draft whose metadata changes during or after download. A failure leaves the draft private and
-safe to retry. Verified progress is stored by commit under
-`target/release-worktree-cache/release-resume/`: a retry first
-revalidates existing candidate or staged artifacts and skips completed build phases only when those
-checks still pass. Set `CLINCH_RELEASE_RESUME=0` to force a fresh run.
-
-An `INTEL=1` release builds Apple Silicon and Intel bundles separately and reuses one generated
-settings schema across them. The verifier requires the large Clinch executable in each archive to
-contain exactly its advertised native slice. The small updater swap tool, jq helper, and dock-tile
-plugin remain universal so either architecture can safely complete an update. A `UNIVERSAL=1`
-build compiles its two executable slices one after the other; `CLINCH_PARALLEL_ARCH_BUILDS=1`
-(or `auto`, on hosts with at least 32 GiB of RAM and 8 logical CPUs) builds them in parallel at
-roughly twice the peak memory, and `CLINCH_PARALLEL_ARCH_JOBS` sets the jobs per architecture.
-
-If a release fails partway through the gate, rerunning `make release` for the same commit skips
-the gate stages that already passed; the license and advisory checks always run again.
-
-After these changes land on `main`, run `make configure-release-repository` once. It validates both
-workstation key copies before deleting the obsolete GitHub signing secrets and `public-release`
-environment, then reapplies branch, scanning, Actions-token, and immutable-release controls.
-
-## Local disk and resource maintenance
-
-From a source checkout, `make worktrees` previews registered worktrees, their disk use, and
-what prevents cleanup. It deletes nothing. Once a worktree is finished, close its tabs and
-processes, review its ignored files in the preview, then select its exact path:
-
-```bash
-./script/clean-worktrees --remove "$HOME/.clinch/worktrees/clinch-terminal/finished-branch"
-./script/clean-worktrees --remove "$HOME/.clinch/worktrees/clinch-terminal/finished-branch" --apply
-```
-
-Removal requires a clean, unlocked, attached worktree under the managed worktree directory,
-with its commits merged into the selected base. The default base is local `main`, `master`,
-or `origin/HEAD`; use `--base` for another branch. This check does not fetch and conservatively
-keeps squash-merged branches whose commits are not ancestors of the base. Primary/current
-checkouts, symlink paths, indexes that hide tracked changes, and checkouts used as one of your
-running processes' working directories are protected. Paths with backslashes, control characters, or
-non-ASCII characters are kept because process inspection may escape them. If process inspection
-fails, cleanup is blocked. Checks run again before removal;
-Git performs the final removal without force, and the branch is preserved.
-
-Removing a checkout **also removes ignored files**, including build outputs and local `.env`
-files, and means Undo Close can no longer reopen that checkout. Move any local files you want
-to keep first. Process checks are a snapshot: don't start new work in a checkout while removing
-it. Tab closure alone never deletes a worktree. `--repo`, `--managed-root`, `--json`, and `--size`
-are available for other repositories and scripted previews. To reclaim only regenerable Cargo
-caches while retaining checkouts and compiled dependencies, use `make prune` (default: seven
-days old), or preview with `./script/reclaim-build-space --dry-run`.
-
-On macOS, `make resources` watches the Clinch process bound to the current terminal. It uses
-OS counters every five seconds and displays CPU, resident memory, full physical footprint
-(including compressed memory), and separate totals for child processes such as shells and
-coding agents. CPU at 100% means one core. Child totals are approximate: shared memory may be
-counted more than once, short-lived processes may exit between samples, and unreadable children
-are counted separately. It reads no terminal text or provider transcripts and sends nothing
-over the network. To record a bounded sample from another terminal:
-
-```bash
-./script/watch-clinch-resources --pid 12345 --samples 60 --csv /tmp/clinch-resources.csv
-```
-
-Replace `12345` with the Clinch PID from Activity Monitor. CSV output creates a new file and
-refuses to overwrite an existing one. Ctrl-C stops an interactive watch; nothing is installed
-to run in the background. Clinch also logs a local warning when its own footprint reaches
-2 GB, with resident memory and estimated open/Undo Close terminal retention. That warning
-re-arms only after the footprint falls below 1.5 GB.
-
-## License and attribution
+## License
 
 Clinch is a modified version of [Warp](https://github.com/warpdotdev/warp), licensed under
-[AGPL-3.0](LICENSE-AGPL). The `warpui_core` and `warpui` crates remain under
-[MIT](LICENSE-MIT).
-
-Clinch is not affiliated with or endorsed by Warp or Denver Technologies, Inc. “Warp” is their
-trademark.
-
-AGPL software may be sold. A paid Clinch download, subscription, support plan, or hosted service
-must preserve recipients' AGPL rights: they may run, inspect, modify, fork, and redistribute the
-covered code, including commercially. Clinch cannot add a no-fork, noncommercial, or no-resale
-restriction to the inherited AGPL code. A commercial distributor does not have to use a public
-GitHub repository, but it must provide the Complete Corresponding Source and required notices in
-the manner and for the periods required by the AGPL; network users must also receive the AGPL
-source offer. Code for which all relevant copyrights are separately controlled could be offered
-under another license, but that does not relicense the inherited AGPL portions.
-
-Those copyright permissions do not grant rights to Warp trademarks or guarantee access to any
-Warp-operated service. Before charging for Clinch, separately review branding, hosted-service
-terms, privacy disclosures, payment/tax obligations, and every non-code asset or integration used
-by the commercial offering. This repository's notices and release checks reduce known licensing
-risk; they are not a substitute for advice from counsel about a particular launch.
+[AGPL-3.0](LICENSE-AGPL). The `warpui_core` and `warpui` crates are [MIT](LICENSE-MIT). Clinch is
+not affiliated with Warp or Denver Technologies, Inc. Commercial-use notes:
+[docs/licensing.md](docs/licensing.md).

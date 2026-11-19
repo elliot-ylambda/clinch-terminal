@@ -11,7 +11,7 @@ pub const UPSTREAM_DOCS_URL: &str = "https://docs.warp.dev/";
 pub const GITHUB_ISSUES_URL: &str = "https://github.com/elliot-ylambda/clinch-terminal/issues";
 pub const COMMUNITY_URL: &str = "https://github.com/elliot-ylambda/clinch-terminal";
 pub const PRIVACY_POLICY_URL: &str =
-    "https://github.com/elliot-ylambda/clinch-terminal#privacy--telemetry";
+    "https://github.com/elliot-ylambda/clinch-terminal/blob/main/docs/privacy.md";
 
 pub fn feedback_form_url() -> String {
     let mut url =

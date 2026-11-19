@@ -72,7 +72,8 @@ CLAUDE.md
 !/AGENTS.md
 !/CLAUDE.md
 WARP.md
-/docs/
+# Local agent plans and specs; the rest of docs/ is published user documentation.
+/docs/superpowers/
 /skills-lock.json
 
 # Generated duplicate of crates/command-signatures-v2

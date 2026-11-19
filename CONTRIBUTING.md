@@ -33,8 +33,8 @@ GitHub Actions runs step 2 on every PR, on an Apple Silicon Mac: formatting,
 dependency licenses, script syntax, the shell and Python test suites, and the
 Remote Control checks. It does not build the app, so steps 3 and 4 are yours.
 
-Build-from-source and verification commands are documented in the
-[README](README.md#build-and-verify-from-source).
+Build-from-source and verification commands are documented in
+[docs/development.md](docs/development.md#build-and-verify-from-source).
 
 ## Code of conduct
 
