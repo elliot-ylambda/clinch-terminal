@@ -12,6 +12,7 @@ use warp::integration_testing::terminal::{
     execute_echo_str, wait_until_bootstrapped_single_pane_for_tab,
 };
 use warp::integration_testing::view_getters::{single_terminal_view_for_tab, workspace_view};
+use warp::integration_testing::workspace::set_vertical_tabs_panel_width;
 use warp::settings::{AutoCreateWorktreesForNewTabs, Theme};
 use warp::themes::theme::ThemeKind;
 use warp::workspace::view::auto_coordinate::AUTO_COORDINATE_PILL_POSITION_ID;
@@ -93,6 +94,12 @@ fn redesign_screens(mut user_defaults: HashMap<String, String>) -> Builder {
         .with_step(shot("split"))
         .with_step(press("open settings", &["cmd-,"]))
         .with_step(shot("settings"))
+        // Too narrow for the full "Tasks" and "Bookmarks" labels, the sidebar foot shows icon
+        // buttons instead, so no label is cut short or runs into the "+" beside it.
+        .with_step(set_vertical_tabs_panel_width(237.))
+        .with_step(shot("sidebar-narrow"))
+        .with_step(set_vertical_tabs_panel_width(200.))
+        .with_step(shot("sidebar-min"))
 }
 
 /// The agent surfaces, against a stand-in `claude` that only waits, so no real agent or account is

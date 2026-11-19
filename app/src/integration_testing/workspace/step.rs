@@ -33,6 +33,19 @@ pub fn press_native_modal_button(button_index: usize) -> TestStep {
         })
 }
 
+/// Resizes the vertical tabs sidebar of the active window, as dragging its edge would.
+pub fn set_vertical_tabs_panel_width(width: f32) -> TestStep {
+    TestStep::new("Resize the vertical tabs sidebar")
+        .with_action(move |app, window_id, _data| {
+            let workspace = workspace_view(app, window_id);
+            workspace.update(app, |workspace, ctx| {
+                workspace.set_vertical_tabs_panel_width(width);
+                ctx.notify();
+            });
+        })
+        .set_post_step_pause(std::time::Duration::from_millis(400))
+}
+
 /// Trigger undo close (restore closed pane/tab/window) action.
 pub fn trigger_undo_close() -> TestStep {
     TestStep::new("Trigger undo close").with_action(move |app, _, _data| {

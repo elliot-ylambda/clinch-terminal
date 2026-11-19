@@ -15,6 +15,7 @@ use repo_metadata::repositories::DetectedRepositories;
 use settings::Setting as _;
 use warp_core::context_flag::ContextFlag;
 use warp_core::telemetry::TelemetryEvent as _;
+use warp_core::ui::builder::UiBuilder;
 use warp_core::ui::color::coloru_with_opacity;
 use warp_core::ui::icons::SPINNER_FRAMES;
 use warp_core::ui::theme::color::internal_colors;
@@ -31,11 +32,12 @@ use warpui::elements::{
     Hoverable, LiveElement, MainAxisAlignment, MainAxisSize, MouseStateHandle, OffsetPositioning,
     Padding, ParentAnchor, ParentElement, ParentOffsetBounds, PositionedElementAnchor,
     PositionedElementOffsetBounds, Radius, Resizable, ResizableStateHandle, SavePosition,
-    ScrollTarget, ScrollToPositionMode, ScrollbarWidth, Shrinkable, Stack, Text,
+    ScrollTarget, ScrollToPositionMode, ScrollbarWidth, Shrinkable, SizeConstraintCondition,
+    SizeConstraintSwitch, Stack, Text, DEFAULT_UI_LINE_HEIGHT_RATIO,
 };
 use warpui::fonts::{Properties, Weight};
-use warpui::platform::Cursor;
-use warpui::text_layout::ClipConfig;
+use warpui::platform::{Cursor, LineStyle};
+use warpui::text_layout::{ClipConfig, StyleAndFont, TextStyle, DEFAULT_TOP_BOTTOM_RATIO};
 use warpui::ui_components::components::{UiComponent, UiComponentStyles};
 use warpui::ui_components::text_input::TextInput;
 use warpui::units::IntoPixels;
@@ -1508,58 +1510,151 @@ fn render_control_bar(
         .finish()
 }
 
-/// A button at the foot of the sidebar that opens its popover.
-fn render_foot_button(
+const FOOT_BUTTON_LABEL_FONT_SIZE: f32 = 13.;
+const FOOT_BUTTON_ICON_SIZE: f32 = 15.;
+const FOOT_BUTTON_ICON_LABEL_GAP: f32 = 7.;
+const FOOT_BUTTON_HORIZONTAL_PADDING: f32 = 10.;
+const FOOT_BUTTON_SPACING: f32 = 6.;
+/// The "+" is square: its icon with the same padding on every side.
+const FOOT_NEW_SECTION_BUTTON_WIDTH: f32 =
+    FOOT_BUTTON_ICON_SIZE + 2. * FOOT_BUTTON_HORIZONTAL_PADDING;
+
+/// A popover button at the foot of the sidebar.
+struct FootButton {
     icon: WarpIcon,
+    /// Shown in full, or as the tooltip when the foot is too narrow for it.
     label: String,
+    /// Shown beside the icon when the foot is too narrow for `label`, like the task count.
+    compact_label: Option<String>,
     popover: SidebarPopover,
     is_open: bool,
     mouse_state: MouseStateHandle,
     position_id: &'static str,
+}
+
+fn foot_button_label_properties() -> Properties {
+    Properties::default().weight(Weight::Medium)
+}
+
+/// The width a foot button needs to show its whole label: padding, icon, gap and the label as
+/// laid out in the UI font.
+fn foot_button_natural_width(label: &str, appearance: &Appearance, app: &AppContext) -> f32 {
+    let line = app.font_cache().text_layout_system().layout_line(
+        label,
+        LineStyle {
+            font_size: FOOT_BUTTON_LABEL_FONT_SIZE,
+            line_height_ratio: DEFAULT_UI_LINE_HEIGHT_RATIO,
+            baseline_ratio: DEFAULT_TOP_BOTTOM_RATIO,
+            fixed_width_tab_size: None,
+        },
+        &[(
+            0..label.chars().count(),
+            StyleAndFont::new(
+                appearance.ui_font_family(),
+                foot_button_label_properties(),
+                TextStyle::new(),
+            ),
+        )],
+        f32::MAX,
+        ClipConfig::default(),
+    );
+    2. * FOOT_BUTTON_HORIZONTAL_PADDING
+        + FOOT_BUTTON_ICON_SIZE
+        + FOOT_BUTTON_ICON_LABEL_GAP
+        + line.width
+}
+
+/// Shows `tooltip` above a hovered sidebar foot button.
+fn with_foot_tooltip(
+    button: Box<dyn Element>,
+    tooltip: String,
+    ui_builder: &UiBuilder,
+) -> Box<dyn Element> {
+    let mut stack = Stack::new().with_child(button);
+    stack.add_positioned_overlay_child(
+        ui_builder.tool_tip(tooltip).build().finish(),
+        OffsetPositioning::offset_from_parent(
+            vec2f(0., -6.),
+            ParentOffsetBounds::WindowByPosition,
+            ParentAnchor::TopMiddle,
+            ChildAnchor::BottomMiddle,
+        ),
+    );
+    stack.finish()
+}
+
+/// A button at the foot of the sidebar that opens its popover. A `compact` button shows its
+/// icon (and `compact_label`) with the full label as a tooltip, for a sidebar too narrow to fit
+/// every label; the label's ellipsis only guards against rounding.
+fn render_foot_button(
+    button: &FootButton,
+    compact: bool,
     appearance: &Appearance,
 ) -> Box<dyn Element> {
     let tokens = *appearance.tokens();
     let font_family = appearance.ui_font_family();
-    let button = Hoverable::new(mouse_state, move |hover_state| {
-        let content = Flex::row()
+    let ui_builder = appearance.ui_builder().clone();
+    let icon = button.icon;
+    let is_open = button.is_open;
+    let popover = button.popover;
+    let label = if compact {
+        button.compact_label.clone()
+    } else {
+        Some(button.label.clone())
+    };
+    let tooltip = compact.then(|| button.label.clone());
+    let hoverable = Hoverable::new(button.mouse_state.clone(), move |hover_state| {
+        let mut content = Flex::row()
             .with_main_axis_size(MainAxisSize::Max)
             .with_main_axis_alignment(MainAxisAlignment::Center)
             .with_cross_axis_alignment(CrossAxisAlignment::Center)
-            .with_spacing(7.)
+            .with_spacing(FOOT_BUTTON_ICON_LABEL_GAP)
             .with_child(
                 ConstrainedBox::new(
                     icon.to_warpui_icon(WarpThemeFill::Solid(tokens.text_2))
                         .finish(),
                 )
-                .with_width(15.)
-                .with_height(15.)
+                .with_width(FOOT_BUTTON_ICON_SIZE)
+                .with_height(FOOT_BUTTON_ICON_SIZE)
                 .finish(),
-            )
-            .with_child(
-                Text::new_inline(label.clone(), font_family, 13.)
-                    .with_style(Properties::default().weight(Weight::Medium))
-                    .with_color(tokens.text_1)
-                    .finish(),
-            )
-            .finish();
+            );
+        if let Some(label) = &label {
+            content.add_child(
+                Shrinkable::new(
+                    1.,
+                    Text::new_inline(label.clone(), font_family, FOOT_BUTTON_LABEL_FONT_SIZE)
+                        .with_style(foot_button_label_properties())
+                        .with_clip(ClipConfig::ellipsis())
+                        .with_color(tokens.text_1)
+                        .finish(),
+                )
+                .finish(),
+            );
+        }
         let background = if is_open || hover_state.is_hovered() {
             tokens.surface_raised
         } else {
             tokens.surface_field
         };
-        Container::new(content)
+        let pill = Container::new(content.finish())
             .with_vertical_padding(8.)
-            .with_horizontal_padding(10.)
+            .with_horizontal_padding(FOOT_BUTTON_HORIZONTAL_PADDING)
             .with_background(ThemeFill::Solid(background))
             .with_corner_radius(corners_md())
-            .finish()
+            .finish();
+        match &tooltip {
+            Some(tooltip) if hover_state.is_hovered() => {
+                with_foot_tooltip(pill, tooltip.clone(), &ui_builder)
+            }
+            _ => pill,
+        }
     })
     .with_cursor(Cursor::PointingHand)
     .on_click(move |ctx, _, _| {
         ctx.dispatch_typed_action(WorkspaceAction::ToggleSidebarPopover(popover));
     })
     .finish();
-    SavePosition::new(button, position_id).finish()
+    SavePosition::new(hoverable, button.position_id).finish()
 }
 
 /// The square "+" at the end of the sidebar foot that makes a new section.
@@ -1582,31 +1677,19 @@ fn render_new_section_button(
                     .to_warpui_icon(WarpThemeFill::Solid(tokens.text_2))
                     .finish(),
             )
-            .with_width(15.)
-            .with_height(15.)
+            .with_width(FOOT_BUTTON_ICON_SIZE)
+            .with_height(FOOT_BUTTON_ICON_SIZE)
             .finish(),
         )
-        .with_uniform_padding(10.)
+        .with_uniform_padding(FOOT_BUTTON_HORIZONTAL_PADDING)
         .with_background(ThemeFill::Solid(background))
         .with_corner_radius(corners_md())
         .finish();
-        if !is_hovered {
-            return button;
+        if is_hovered {
+            with_foot_tooltip(button, "New section".to_owned(), &ui_builder)
+        } else {
+            button
         }
-        let mut stack = Stack::new().with_child(button);
-        stack.add_positioned_overlay_child(
-            ui_builder
-                .tool_tip("New section".to_owned())
-                .build()
-                .finish(),
-            OffsetPositioning::offset_from_parent(
-                vec2f(0., -6.),
-                ParentOffsetBounds::WindowByPosition,
-                ParentAnchor::TopMiddle,
-                ChildAnchor::BottomMiddle,
-            ),
-        );
-        stack.finish()
     })
     .with_cursor(Cursor::PointingHand)
     .on_click(|ctx, _, _| ctx.dispatch_typed_action(WorkspaceAction::CreateNewTabGroup))
@@ -1620,51 +1703,68 @@ fn render_sidebar_foot(
 ) -> Box<dyn Element> {
     let appearance = Appearance::as_ref(app);
     let task_count = workspace.tasks.len();
-    let tasks_label = if task_count == 0 {
-        "Tasks".to_string()
-    } else {
-        format!("Tasks · {task_count}")
-    };
-    Container::new(
-        Flex::row()
+    let buttons = [
+        FootButton {
+            icon: WarpIcon::Check,
+            label: if task_count == 0 {
+                "Tasks".to_string()
+            } else {
+                format!("Tasks · {task_count}")
+            },
+            compact_label: (task_count > 0).then(|| task_count.to_string()),
+            popover: SidebarPopover::Tasks,
+            is_open: state.open_popover == Some(SidebarPopover::Tasks),
+            mouse_state: state.tasks_link_mouse_state.clone(),
+            position_id: SIDEBAR_TASKS_LINK_POSITION_ID,
+        },
+        FootButton {
+            icon: WarpIcon::Bookmark,
+            label: "Bookmarks".to_string(),
+            compact_label: None,
+            popover: SidebarPopover::Bookmarks,
+            is_open: state.open_popover == Some(SidebarPopover::Bookmarks),
+            mouse_state: state.bookmarks_link_mouse_state.clone(),
+            position_id: SIDEBAR_BOOKMARKS_LINK_POSITION_ID,
+        },
+    ];
+    let natural_widths = buttons
+        .each_ref()
+        .map(|button| foot_button_natural_width(&button.label, appearance, app));
+    // Narrower than this, some label would be cut short, so the foot switches to icons. The
+    // extra pixel absorbs float rounding in the flex split, which would otherwise ellipsize a
+    // label that exactly fits.
+    let full_labels_width = natural_widths.iter().sum::<f32>()
+        + FOOT_NEW_SECTION_BUTTON_WIDTH
+        + FOOT_BUTTON_SPACING * buttons.len() as f32
+        + 1.;
+    let render_row = |compact: bool| {
+        let mut row = Flex::row()
             .with_main_axis_size(MainAxisSize::Max)
             .with_cross_axis_alignment(CrossAxisAlignment::Center)
-            .with_spacing(6.)
-            .with_child(
-                Expanded::new(
-                    1.,
-                    render_foot_button(
-                        WarpIcon::Check,
-                        tasks_label,
-                        SidebarPopover::Tasks,
-                        state.open_popover == Some(SidebarPopover::Tasks),
-                        state.tasks_link_mouse_state.clone(),
-                        SIDEBAR_TASKS_LINK_POSITION_ID,
-                        appearance,
-                    ),
-                )
-                .finish(),
-            )
-            .with_child(
-                Expanded::new(
-                    1.,
-                    render_foot_button(
-                        WarpIcon::Bookmark,
-                        "Bookmarks".to_string(),
-                        SidebarPopover::Bookmarks,
-                        state.open_popover == Some(SidebarPopover::Bookmarks),
-                        state.bookmarks_link_mouse_state.clone(),
-                        SIDEBAR_BOOKMARKS_LINK_POSITION_ID,
-                        appearance,
-                    ),
-                )
-                .finish(),
-            )
-            .with_child(render_new_section_button(
-                state.new_section_mouse_state.clone(),
-                appearance,
-            ))
-            .finish(),
+            .with_spacing(FOOT_BUTTON_SPACING);
+        for (button, natural_width) in buttons.iter().zip(natural_widths) {
+            // Full labels share the row in proportion to what each needs, so "Bookmarks" gets
+            // more room than "Tasks" and both fit whenever the row is `full_labels_width` wide.
+            let flex = if compact { 1. } else { natural_width };
+            row.add_child(
+                Expanded::new(flex, render_foot_button(button, compact, appearance)).finish(),
+            );
+        }
+        row.with_child(render_new_section_button(
+            state.new_section_mouse_state.clone(),
+            appearance,
+        ))
+        .finish()
+    };
+    Container::new(
+        SizeConstraintSwitch::new(
+            render_row(false),
+            [(
+                SizeConstraintCondition::WidthLessThan(full_labels_width),
+                render_row(true),
+            )],
+        )
+        .finish(),
     )
     .with_padding(
         Padding::uniform(8.)
