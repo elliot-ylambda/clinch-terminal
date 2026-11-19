@@ -716,6 +716,60 @@ fn a_restart_keeps_asleep_sessions_asleep_since_the_time_they_fell_asleep() {
     });
 }
 
+/// After a restart a tab comes back named after its conversation, as it was before the quit, not
+/// after the shell's directory. A pane on another conversation by then doesn't take the old name.
+#[test]
+fn a_restart_keeps_each_tab_named_after_its_conversation() {
+    App::test((), |mut app| async move {
+        initialize_app_for_terminal_view(&mut app);
+        app.update(crate::remote_control::register);
+        AgentRestoreQueue::handle(&app).update(&mut app, |queue, _| {
+            queue.unclaimed_agent_titles = HashMap::from([
+                (
+                    b"named".to_vec(),
+                    RecordedAgentTitle {
+                        session_id: "named".into(),
+                        title: "PR #2560 follow-ups".into(),
+                    },
+                ),
+                (
+                    b"moved-on".to_vec(),
+                    RecordedAgentTitle {
+                        session_id: "an-earlier-conversation".into(),
+                        title: "Earlier topic".into(),
+                    },
+                ),
+            ]);
+        });
+        let named = enqueue(&mut app, "named", Rc::default(), Rc::default());
+        let moved_on = enqueue(&mut app, "moved-on", Rc::default(), Rc::default());
+        let agent_title = |app: &App, terminal: &ViewHandle<TerminalView>| {
+            app.read(|ctx| {
+                CLIAgentSessionsModel::as_ref(ctx)
+                    .session(terminal.id())
+                    .and_then(|session| session.session_context.agent_title.clone())
+            })
+        };
+        assert_eq!(
+            agent_title(&app, &named).as_deref(),
+            Some("PR #2560 follow-ups")
+        );
+        assert_eq!(agent_title(&app, &moved_on), None);
+        named.read(&app, |view, ctx| {
+            assert!(view.agent_is_asleep());
+            assert_eq!(
+                view.agent_title_without_status(ctx).as_deref(),
+                Some("PR #2560 follow-ups")
+            );
+        });
+        // Nothing claims a title after launch, so the next record forgets the unclaimed ones.
+        AgentRestoreQueue::handle(&app).update(&mut app, |queue, ctx| {
+            queue.record_interrupted_turns(false, ctx);
+            assert!(queue.unclaimed_agent_titles.is_empty());
+        });
+    });
+}
+
 /// A pane put to sleep while Clinch runs is handed to the queue the way a restored one is, even
 /// if the queue restored that same pane earlier.
 #[test]

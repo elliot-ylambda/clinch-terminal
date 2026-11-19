@@ -2169,6 +2169,29 @@ fn asleep_panes_round_trip_with_the_time_they_fell_asleep() {
     assert!(read_asleep_panes_in(dir.path()).is_empty());
 }
 
+#[test]
+fn agent_titles_round_trip_with_the_conversation_they_name() {
+    let dir = tempfile::tempdir().unwrap();
+    assert!(read_agent_titles_in(dir.path()).is_empty());
+
+    let title = RecordedAgentTitle {
+        session_id: "conversation-1".into(),
+        title: "Magister-Marketing PR #2560 follow-ups".into(),
+    };
+    write_agent_titles_in(
+        dir.path(),
+        &BTreeMap::from([(vec![0xab, 0xcd], title.clone())]),
+    )
+    .unwrap();
+    let read = read_agent_titles_in(dir.path());
+    assert_eq!(read.len(), 1);
+    assert_eq!(read.get([0xab, 0xcd].as_slice()), Some(&title));
+
+    // A file that can't be read restores no titles rather than failing the launch.
+    std::fs::write(dir.path().join(AGENT_TITLES_FILE), b"not json").unwrap();
+    assert!(read_agent_titles_in(dir.path()).is_empty());
+}
+
 /// Stopping an agent for sleep must not look like the user closing it. The guard a quitting app
 /// leaves for each pane does that, and it comes off again if the agent never stopped.
 #[test]

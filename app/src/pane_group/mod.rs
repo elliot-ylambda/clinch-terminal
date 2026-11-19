@@ -2460,6 +2460,28 @@ impl PaneGroup {
             .collect()
     }
 
+    /// Each agent pane in this tab whose conversation has a title from its agent, for a restart to
+    /// show before the agent runs again.
+    pub(crate) fn agent_pane_titles(
+        &self,
+        ctx: &AppContext,
+    ) -> Vec<(Vec<u8>, crate::agent_resume::RecordedAgentTitle)> {
+        let sessions = crate::terminal::cli_agent_sessions::CLIAgentSessionsModel::as_ref(ctx);
+        self.panes_of::<TerminalPane>()
+            .filter(|pane| !self.is_pane_hidden_for_close(pane.id()))
+            .filter_map(|pane| {
+                let context = &sessions
+                    .session(pane.terminal_view(ctx).id())?
+                    .session_context;
+                let title = crate::agent_resume::RecordedAgentTitle {
+                    session_id: context.session_id.clone()?,
+                    title: context.agent_title.clone()?,
+                };
+                Some((pane.session_uuid(), title))
+            })
+            .collect()
+    }
+
     /// The panes in this tab whose agent Clinch restores, and so can leave or find asleep.
     pub(crate) fn agent_terminal_views(&self, ctx: &AppContext) -> Vec<ViewHandle<TerminalView>> {
         self.panes_of::<TerminalPane>()

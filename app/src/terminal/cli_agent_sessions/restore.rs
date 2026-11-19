@@ -14,8 +14,8 @@ use warpui::{
 
 use super::{CLIAgentSessionKey, CLIAgentSessionsModel};
 use crate::agent_resume::{
-    read_asleep_panes, read_interrupted_turns, write_asleep_panes, write_interrupted_turns,
-    RESTART_CONTINUE_MARKER,
+    read_agent_titles, read_asleep_panes, read_interrupted_turns, write_agent_titles,
+    write_asleep_panes, write_interrupted_turns, RecordedAgentTitle, RESTART_CONTINUE_MARKER,
 };
 use crate::settings::ClinchSettings;
 use crate::terminal::view::use_agent_footer::AgentSendOrigin;
@@ -120,6 +120,17 @@ fn asleep_panes(ctx: &AppContext) -> BTreeMap<Vec<u8>, DateTime<Utc>> {
     panes
 }
 
+/// The title each agent pane's conversation has, across every window and project.
+fn agent_titles(ctx: &AppContext) -> BTreeMap<Vec<u8>, RecordedAgentTitle> {
+    let mut titles = BTreeMap::new();
+    for (_, workspace) in WorkspaceRegistry::as_ref(ctx).all_workspaces(ctx) {
+        for group in workspace.as_ref(ctx).tab_views() {
+            titles.extend(group.as_ref(ctx).agent_pane_titles(ctx));
+        }
+    }
+    titles
+}
+
 /// Running commands that a restart right now would end for good, across every window and project.
 pub(crate) fn running_commands_outside_agents(ctx: &AppContext) -> usize {
     WorkspaceRegistry::as_ref(ctx)
@@ -162,6 +173,9 @@ pub(crate) struct AgentRestoreQueue {
     /// Since when the previous run's asleep panes were asleep, until a restored tab claims it.
     unclaimed_asleep_since: HashMap<Vec<u8>, DateTime<Utc>>,
     last_recorded_asleep: Option<BTreeMap<Vec<u8>, DateTime<Utc>>>,
+    /// The previous run's conversation titles, until a restored tab claims its own.
+    unclaimed_agent_titles: HashMap<Vec<u8>, RecordedAgentTitle>,
+    last_recorded_titles: Option<BTreeMap<Vec<u8>, RecordedAgentTitle>>,
 }
 
 impl Entity for AgentRestoreQueue {
@@ -198,6 +212,7 @@ impl AgentRestoreQueue {
             self.unclaimed_interrupted_panes = read_interrupted_turns();
         }
         self.unclaimed_asleep_since = read_asleep_panes();
+        self.unclaimed_agent_titles = read_agent_titles();
         self.schedule_recording(ctx);
     }
 
@@ -213,7 +228,8 @@ impl AgentRestoreQueue {
 
     /// Saves the panes a restart right now would cut off, including restored ones still waiting
     /// for their continue, so a second restart can't lose them. `quitting` always writes, which
-    /// dates the record from the quit rather than from when the list last changed.
+    /// dates the record from the quit rather than from when the list last changed. Also saves which
+    /// panes are asleep and what each agent tab's conversation is called, when either changed.
     pub(crate) fn record_interrupted_turns(&mut self, quitting: bool, ctx: &AppContext) {
         // Windows restore synchronously at launch, so nothing can claim these by now.
         self.unclaimed_interrupted_panes.clear();
@@ -233,6 +249,12 @@ impl AgentRestoreQueue {
         if self.last_recorded_asleep.as_ref() != Some(&asleep) {
             write_asleep_panes(&asleep);
             self.last_recorded_asleep = Some(asleep);
+        }
+        self.unclaimed_agent_titles.clear();
+        let titles = agent_titles(ctx);
+        if self.last_recorded_titles.as_ref() != Some(&titles) {
+            write_agent_titles(&titles);
+            self.last_recorded_titles = Some(titles);
         }
     }
 
@@ -261,6 +283,19 @@ impl AgentRestoreQueue {
             .unclaimed_asleep_since
             .remove(&pane_uuid)
             .unwrap_or_else(Utc::now);
+        // The tab keeps the name its conversation had, rather than the shell's, until its agent
+        // runs again and names it itself.
+        if let Some(recorded) = self.unclaimed_agent_titles.remove(&pane_uuid) {
+            let terminal_id = terminal.id();
+            CLIAgentSessionsModel::handle(ctx).update(ctx, |sessions, ctx| {
+                sessions.restore_agent_title(
+                    terminal_id,
+                    &recorded.session_id,
+                    recorded.title,
+                    ctx,
+                );
+            });
+        }
         self.insert(
             terminal,
             pane_uuid,

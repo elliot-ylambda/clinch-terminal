@@ -12219,6 +12219,7 @@ impl TerminalView {
             }
             ModelEvent::Title(title) => {
                 self.terminal_title = title.to_owned();
+                self.remember_agent_title(ctx);
                 CLIAgentSessionsModel::handle(ctx).update(ctx, |sessions_model, ctx| {
                     sessions_model.update_from_terminal_title(
                         self.view_id,

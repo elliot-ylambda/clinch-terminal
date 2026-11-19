@@ -498,6 +498,102 @@ fn the_card_names_the_agent_and_the_tab_it_would_wake() {
     });
 }
 
+/// Sets the terminal title the way a title escape sequence does, and delivers the event for it.
+fn set_terminal_title(view: &mut TerminalView, title: &str, ctx: &mut ViewContext<TerminalView>) {
+    crate::terminal::model::ansi::Handler::set_title(
+        &mut *view.model.lock(),
+        Some(title.to_owned()),
+    );
+    view.handle_terminal_event(
+        &crate::terminal::model_events::ModelEvent::Title(title.to_owned()),
+        ctx,
+    );
+}
+
+/// The name the pane's session keeps for its conversation, for while the agent doesn't hold it.
+fn remembered_agent_title(view: &TerminalView, ctx: &AppContext) -> Option<String> {
+    CLIAgentSessionsModel::as_ref(ctx)
+        .session(view.view_id)
+        .and_then(|session| session.session_context.agent_title.clone())
+}
+
+/// An asleep tab keeps the name its agent gave the conversation. Once the agent stops, the shell
+/// holds the terminal and titles it with its directory. The row, the card over the pane and the
+/// pane header keep the agent's name, through waking too, until the agent names the conversation
+/// again. A different conversation in the pane doesn't inherit it.
+#[test]
+fn an_asleep_tab_keeps_the_name_its_agent_gave_the_conversation() {
+    warp_core::channel::ChannelState::set(warp_core::channel::ChannelState::new(
+        warp_core::channel::Channel::Local,
+        warp_core::channel::ChannelConfig::no_backend(
+            warp_core::AppId::new("sh", "clinch", "ClinchDev"),
+            "clinch-test.log",
+        ),
+    ));
+    const NAME: &str = "Magister-Marketing PR #2560 follow-ups";
+    App::test((), |mut app| async move {
+        initialize_app_for_terminal_view(&mut app);
+        app.update(crate::remote_control::register);
+        let terminal = add_window_with_terminal(&mut app, None);
+        assert_eq!(blocker_for(&mut app, &terminal, idle_session()), None);
+        terminal.update(&mut app, |view, ctx| {
+            view.pane_configuration.update(ctx, |configuration, ctx| {
+                configuration.clear_custom_vertical_tabs_title(ctx);
+            });
+            set_terminal_title(view, &format!("✳ {NAME}"), ctx);
+            assert_eq!(terminal_row_title(view, ctx), NAME);
+
+            view.begin_agent_sleep(RESUME_COMMAND.to_owned(), ctx);
+            assert!(view.agent_exited_for_sleep(ctx));
+            // The shell has the terminal back and titles it with its directory.
+            set_terminal_title(view, "..-marketing/dune-cinder", ctx);
+            view.mark_agent_asleep(Utc::now(), ctx);
+        });
+        terminal.read(&app, |view, ctx| {
+            assert_eq!(terminal_row_title(view, ctx), NAME, "the row");
+            assert_eq!(view.sleep_card_heading(ctx).1, NAME, "the card");
+            assert_eq!(view.agent_title_without_status(ctx).as_deref(), Some(NAME));
+            assert_eq!(view.display_title_from_shell(ctx), format!("✳ {NAME}"));
+            assert_eq!(
+                view.pane_configuration.as_ref(ctx).title(),
+                format!("✳ {NAME}"),
+                "the pane header"
+            );
+        });
+
+        terminal.update(&mut app, |view, ctx| {
+            view.defer_agent_start(Box::new(|_| {}));
+            assert!(view.wake_agent(ctx));
+            // The shell runs the resume command and may title the terminal after it.
+            set_terminal_title(view, "clinch_agent_resume_launch", ctx);
+            assert_eq!(terminal_row_title(view, ctx), NAME, "while it wakes");
+            view.agent_wake_settled(ctx);
+            // The agent starts out showing only its own name.
+            set_terminal_title(view, "✳ Claude Code", ctx);
+            assert_eq!(terminal_row_title(view, ctx), NAME, "a bare agent name");
+            set_terminal_title(view, "✳ Ship the follow-ups", ctx);
+            assert_eq!(terminal_row_title(view, ctx), "Ship the follow-ups");
+            // A title the shell sets, such as the command it runs, doesn't rename the conversation.
+            set_terminal_title(view, "ca", ctx);
+            assert_eq!(
+                remembered_agent_title(view, ctx).as_deref(),
+                Some("Ship the follow-ups")
+            );
+
+            // A new conversation in the same pane starts without a name of its own.
+            CLIAgentSessionsModel::handle(ctx).update(ctx, |sessions, ctx| {
+                sessions.seed_resumed_session(
+                    view.view_id,
+                    AgentResumeProvider::Claude,
+                    "conversation-2".into(),
+                    ctx,
+                );
+            });
+            assert_eq!(remembered_agent_title(view, ctx), None);
+        });
+    });
+}
+
 #[test]
 fn every_reason_has_its_own_name_and_explanation() {
     let all = [

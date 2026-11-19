@@ -112,6 +112,19 @@ pub(crate) fn title_shows_working(agent: CLIAgent, raw_terminal_title: &str) -> 
     }
 }
 
+/// Whether a terminal title is one the agent set, rather than the shell's: its directory, or the
+/// command it is about to run. Claude Code always leads with a status glyph. Codex leads with its
+/// spinner while working, and otherwise ends with ` | <project>`.
+pub(crate) fn is_agents_own_title(agent: CLIAgent, raw_terminal_title: &str) -> bool {
+    let text = raw_terminal_title.trim();
+    let leads_with_glyph = text.chars().next().is_some_and(is_agents_own_glyph);
+    match agent {
+        CLIAgent::Claude => leads_with_glyph,
+        CLIAgent::Codex => leads_with_glyph || text.contains(CODEX_PROJECT_SEPARATOR),
+        _ => false,
+    }
+}
+
 /// Removes provider chrome before a raw title participates in Clinch's title selection.
 /// Prompt-derived titles must not pass through this cleanup.
 pub(crate) fn agent_title_text(agent: CLIAgent, raw_terminal_title: &str) -> &str {
@@ -141,7 +154,13 @@ fn split_agent_title(agent: CLIAgent, title: &str) -> (Option<char>, &str) {
 }
 
 fn is_status_glyph(c: char) -> bool {
-    c == IDLE_GLYPH || c == NEEDS_INPUT_GLYPH || WORKING_FRAMES.contains(&c) || is_braille(c)
+    c == NEEDS_INPUT_GLYPH || is_agents_own_glyph(c)
+}
+
+/// A status glyph the agent draws in its own title. The `!` for needing input is only ever
+/// Clinch's.
+fn is_agents_own_glyph(c: char) -> bool {
+    c == IDLE_GLYPH || WORKING_FRAMES.contains(&c) || is_braille(c)
 }
 
 fn is_braille(c: char) -> bool {

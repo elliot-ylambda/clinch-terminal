@@ -561,6 +561,7 @@ const APP_TERMINATING_FILE: &str = ".app-terminating";
 const CONVERSATION_BOOKMARKS_FILE: &str = "conversation-bookmarks.json";
 const INTERRUPTED_TURNS_FILE: &str = "interrupted-turns.json";
 const ASLEEP_PANES_FILE: &str = "asleep-panes.json";
+const AGENT_TITLES_FILE: &str = "agent-titles.json";
 const SHUTDOWN_OWNERS_DIR: &str = "shutdown-owners";
 /// A list older than this is ignored. Clinch must not revive a turn, and possibly its deploy, days
 /// after it stopped.
@@ -1117,6 +1118,66 @@ fn read_asleep_panes_in(dir: &Path) -> HashMap<Vec<u8>, DateTime<Utc>> {
         .panes
         .into_iter()
         .filter_map(|(pane, since)| Some((hex::decode(pane).ok()?, since)))
+        .collect()
+}
+
+/// The title an agent pane's conversation last had in its tab.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+pub(crate) struct RecordedAgentTitle {
+    /// The conversation the title names, so a pane on another conversation by then doesn't take it.
+    pub(crate) session_id: String,
+    pub(crate) title: String,
+}
+
+/// Each agent pane's conversation title, keyed by hex pane UUID.
+#[derive(Debug, Default, Deserialize, Serialize)]
+struct AgentTitlesFile {
+    panes: BTreeMap<String, RecordedAgentTitle>,
+}
+
+/// Records the title each agent pane's conversation has, so after a restart its tab still says what
+/// it is about before its agent runs again.
+pub(crate) fn write_agent_titles(titles: &BTreeMap<Vec<u8>, RecordedAgentTitle>) {
+    if !runtime_enabled() {
+        return;
+    }
+    let Some(dir) = registry_dir() else { return };
+    if let Err(err) = write_agent_titles_in(&dir, titles) {
+        log::warn!("could not record agent tab titles: {err}");
+    }
+}
+
+fn write_agent_titles_in(
+    dir: &Path,
+    titles: &BTreeMap<Vec<u8>, RecordedAgentTitle>,
+) -> std::io::Result<()> {
+    let file = AgentTitlesFile {
+        panes: titles
+            .iter()
+            .map(|(pane, title)| (hex::encode(pane), title.clone()))
+            .collect(),
+    };
+    write_private_atomic(dir, AGENT_TITLES_FILE, &serde_json::to_vec(&file)?)
+}
+
+/// Each agent pane's conversation title, as the previous run recorded it.
+pub(crate) fn read_agent_titles() -> HashMap<Vec<u8>, RecordedAgentTitle> {
+    if !runtime_enabled() {
+        return HashMap::new();
+    }
+    registry_dir()
+        .map(|dir| read_agent_titles_in(&dir))
+        .unwrap_or_default()
+}
+
+fn read_agent_titles_in(dir: &Path) -> HashMap<Vec<u8>, RecordedAgentTitle> {
+    std::fs::read(dir.join(AGENT_TITLES_FILE))
+        .ok()
+        .and_then(|contents| serde_json::from_slice::<AgentTitlesFile>(&contents).ok())
+        .unwrap_or_default()
+        .panes
+        .into_iter()
+        .filter_map(|(pane, title)| Some((hex::decode(pane).ok()?, title)))
         .collect()
 }
 

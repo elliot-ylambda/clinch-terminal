@@ -1,13 +1,15 @@
 #[cfg(feature = "local_fs")]
 use repo_metadata::repositories::DetectedRepositories;
-use warpui::{AppContext, SingletonEntity as _};
+use warpui::{AppContext, SingletonEntity as _, ViewContext};
 
 use crate::context_chips::display_chip::GitLineChanges;
 use crate::context_chips::{git_line_changes_from_chips, ContextChipKind};
 use crate::terminal::cli_agent_sessions::title_glyph::{
     agent_title_text, shows_working, standardize_agent_title,
 };
-use crate::terminal::cli_agent_sessions::{CLIAgentSession, CLIAgentSessionsModel};
+use crate::terminal::cli_agent_sessions::{
+    conversation_title_from_agent_title, CLIAgentSession, CLIAgentSessionsModel,
+};
 use crate::terminal::TerminalView;
 
 impl TerminalView {
@@ -130,7 +132,9 @@ impl TerminalView {
             .session(self.view_id)
             .filter(|session| session.agent.has_clinch_hooks())?;
         let raw_title = self.terminal_title_from_shell();
-        let text = agent_title_text(session.agent, &raw_title).trim();
+        let text = self
+            .agent_title_stand_in(session)
+            .unwrap_or_else(|| agent_title_text(session.agent, &raw_title).trim());
         let text = if text.is_empty() {
             session.agent.display_name()
         } else {
@@ -151,9 +155,63 @@ impl TerminalView {
         standardize_agent_title(
             session.agent,
             &self.terminal_title_from_shell(),
-            display_text,
+            display_text.or_else(|| self.agent_title_stand_in(session)),
             session.into(),
         )
+    }
+
+    /// Whether the terminal title is the agent's own. It isn't while the agent is going to sleep,
+    /// asleep, waking, or restored and not started: the shell holds the terminal then, and its
+    /// title is usually the working directory.
+    fn agent_owns_terminal_title(&self) -> bool {
+        self.agent_sleep.is_none()
+            && self.agent_sleep_overdue.is_none()
+            && self.deferred_agent_start.is_none()
+    }
+
+    /// What tab chrome shows in place of the terminal title while the agent doesn't hold the
+    /// terminal: the last title the agent gave its conversation, or its name. `None` while the
+    /// terminal title is the agent's own.
+    fn agent_title_stand_in<'a>(&self, session: &'a CLIAgentSession) -> Option<&'a str> {
+        (!self.agent_owns_terminal_title()).then(|| {
+            session
+                .session_context
+                .agent_title
+                .as_deref()
+                .unwrap_or(session.agent.display_name())
+        })
+    }
+
+    /// The agent's name for its conversation, without its status glyph: the live terminal title
+    /// while the agent holds the terminal and names the conversation there, and otherwise the last
+    /// one it gave. An asleep tab keeps its name instead of taking the shell's.
+    pub(super) fn cli_agent_conversation_title(
+        &self,
+        session: &CLIAgentSession,
+        ctx: &AppContext,
+    ) -> Option<String> {
+        self.agent_owns_terminal_title()
+            .then(|| self.cli_agent_terminal_title(ctx))
+            .flatten()
+            .and_then(|title| {
+                conversation_title_from_agent_title(agent_title_text(session.agent, &title))
+            })
+            .or_else(|| session.session_context.agent_title.clone())
+    }
+
+    /// The terminal title changed. If the agent holds the terminal, its session keeps the title for
+    /// when the agent sleeps or Clinch restarts.
+    pub(super) fn remember_agent_title(&self, ctx: &mut ViewContext<Self>) {
+        if !self.agent_owns_terminal_title() {
+            return;
+        }
+        let Some(title) = self.cli_agent_terminal_title(ctx) else {
+            return;
+        };
+        let view_id = self.view_id;
+        CLIAgentSessionsModel::handle(ctx).update(ctx, |sessions, _| {
+            sessions.remember_agent_title(view_id, &title);
+        });
     }
 
     /// Whether tab chrome shows this pane's agent session as working. The title glyph, status

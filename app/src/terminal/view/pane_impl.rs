@@ -42,7 +42,6 @@ use crate::pane_group::{BackingView, SplitPaneState, TOGGLE_MAXIMIZE_PANE_BINDIN
 use crate::settings::app_installation_detection::{
     UserAppInstallDetectionSettings, UserAppInstallStatus,
 };
-use crate::terminal::cli_agent_sessions::title_glyph::agent_title_text;
 use crate::terminal::cli_agent_sessions::{session_context_enabled, CLIAgentSessionsModel};
 use crate::terminal::shared_session::participant_avatar_view::render_participants_and_role_elements;
 use crate::terminal::shared_session::render_util::shared_session_indicator_color;
@@ -1167,11 +1166,8 @@ impl TerminalView {
         }
 
         if supports_session_context {
-            let agent_title = self.cli_agent_terminal_title(ctx);
-            let agent_title = agent_title
-                .as_deref()
-                .map(|title| agent_title_text(session.agent, title));
-            session.title_for_tab(use_latest_prompt, agent_title)
+            let agent_title = self.cli_agent_conversation_title(session, ctx);
+            session.title_for_tab(use_latest_prompt, agent_title.as_deref())
         } else if use_latest_prompt {
             session
                 .session_context

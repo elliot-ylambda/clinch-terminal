@@ -121,6 +121,10 @@ pub struct CLIAgentSessionContext {
     /// hidden (for example behind a dialog) and deliberately not reset by `Stop`: background
     /// shells outlive the turn that started them.
     pub screen_background_work: BackgroundWork,
+    /// The last title the agent gave this conversation in the terminal title, without its status
+    /// glyph. While no agent process holds the terminal (asleep, waking, or restored and not
+    /// started) the terminal title is the shell's, so tab chrome shows this one instead.
+    pub agent_title: Option<String>,
 }
 
 /// State of the rich input editor for composing a prompt to send to a CLI agent.
@@ -187,6 +191,17 @@ impl CLIAgentSessionContext {
             .filter(|summary| !summary.is_empty())
             .map(str::to_owned)
     }
+}
+
+/// The agent's own title text, without its status glyph, as a name for the conversation: paste
+/// markup removed, and `None` for a bare agent name, which says nothing about the conversation.
+pub(crate) fn conversation_title_from_agent_title(text: &str) -> Option<String> {
+    crate::agent_resume::clean_prompt_title_text(text).filter(|title| {
+        !matches!(
+            title.to_ascii_lowercase().as_str(),
+            "claude" | "claude code" | "codex"
+        )
+    })
 }
 
 /// A tracked CLI agent session.
@@ -284,14 +299,7 @@ impl CLIAgentSession {
         use_latest_prompt: bool,
         agent_title: Option<&str>,
     ) -> Option<String> {
-        let agent_title = agent_title
-            .and_then(crate::agent_resume::clean_prompt_title_text)
-            .filter(|title| {
-                !matches!(
-                    title.to_ascii_lowercase().as_str(),
-                    "claude" | "claude code" | "codex"
-                )
-            });
+        let agent_title = agent_title.and_then(conversation_title_from_agent_title);
         if use_latest_prompt {
             self.latest_user_prompt_for_chrome()
                 .and_then(|prompt| crate::agent_resume::clean_prompt_title_text(&prompt))
@@ -322,6 +330,7 @@ impl CLIAgentSession {
     fn reset_identity_scoped_state(&mut self) {
         self.prompt_history = AgentPromptHistory::default();
         self.session_context.fork_first_prompt = None;
+        self.session_context.agent_title = None;
         self.prompt_history_load_state = PromptHistoryLoadState::NotRequested;
         self.prompt_history_generation = self.prompt_history_generation.wrapping_add(1);
         self.has_observed_turn_activity = false;
@@ -1142,6 +1151,49 @@ impl CLIAgentSessionsModel {
             }
             _ => {}
         }
+    }
+
+    /// The terminal title changed while the agent holds the pane. A title the agent set that names
+    /// the conversation stays with the session, so the tab keeps that name while the agent is
+    /// asleep, and after a restart. A bare agent name, such as the one shown while it starts, and a
+    /// title the shell set, such as the command it ran, keep the last one.
+    pub fn remember_agent_title(&mut self, terminal_view_id: EntityId, raw_terminal_title: &str) {
+        let Some(session) = self
+            .sessions
+            .get_mut(&terminal_view_id)
+            .filter(|session| title_glyph::is_agents_own_title(session.agent, raw_terminal_title))
+        else {
+            return;
+        };
+        let text = title_glyph::agent_title_text(session.agent, raw_terminal_title);
+        if let Some(title) = conversation_title_from_agent_title(text) {
+            session.session_context.agent_title = Some(title);
+        }
+    }
+
+    /// Gives a pane restored at launch the title its agent last gave the conversation, as the
+    /// previous run recorded it. A pane now on a different conversation doesn't take it.
+    pub(crate) fn restore_agent_title(
+        &mut self,
+        terminal_view_id: EntityId,
+        session_id: &str,
+        title: String,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        let Some(session) = self.sessions.get_mut(&terminal_view_id) else {
+            return;
+        };
+        if session.session_context.session_id.as_deref() != Some(session_id)
+            || session.session_context.agent_title.is_some()
+        {
+            return;
+        }
+        session.session_context.agent_title = Some(title);
+        let agent = session.agent;
+        ctx.emit(CLIAgentSessionsModelEvent::SessionUpdated {
+            terminal_view_id,
+            agent,
+        });
     }
 
     /// Records the background work read from the agent's status line. `None` means the status

@@ -1,5 +1,6 @@
 use super::{
-    agent_title_text, shows_working, standardize_agent_title, title_shows_working, AgentTitleStatus,
+    agent_title_text, is_agents_own_title, shows_working, standardize_agent_title,
+    title_shows_working, AgentTitleStatus,
 };
 use crate::terminal::CLIAgent;
 
@@ -253,4 +254,31 @@ fn the_title_glyph_and_the_status_dots_always_agree() {
             }
         }
     }
+}
+
+/// Only a title the agent set names its conversation. The shell titles the terminal with its
+/// directory, or the command it is about to run, before and after the agent holds it.
+#[test]
+fn only_the_agents_own_titles_count_as_its_own() {
+    for raw in ["✳ Claude Code", "◐ Fix the build", "⠂ Fix the build"] {
+        assert!(is_agents_own_title(CLIAgent::Claude, raw), "{raw}");
+    }
+    for raw in [
+        "Run three sequential sleeps | cx-test",
+        "⠏ Run three sequential sleeps | cx-test",
+    ] {
+        assert!(is_agents_own_title(CLIAgent::Codex, raw), "{raw}");
+    }
+    for agent in [CLIAgent::Claude, CLIAgent::Codex] {
+        for raw in [
+            "..-marketing/dune-cinder",
+            "ca",
+            "clinch_agent_resume_launch",
+            "! Fix",
+            "",
+        ] {
+            assert!(!is_agents_own_title(agent, raw), "{agent:?} {raw}");
+        }
+    }
+    assert!(!is_agents_own_title(CLIAgent::Devin, "✳ Fix the build"));
 }
