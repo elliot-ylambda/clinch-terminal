@@ -2685,7 +2685,7 @@ pub struct TerminalView {
 
     sessions: ModelHandle<Sessions>,
     active_block_metadata: Option<BlockMetadata>,
-    /// Memoized result of `canonical_session_pwd_if_local`.
+    /// The last local working directory resolved on disk, for `canonicalize_local_pwd`.
     canonical_session_pwd_cache: RefCell<Option<LocalSessionCanonicalPwdCache>>,
 
     block_text_selection_start_position: Option<Vector2F>,
@@ -8447,16 +8447,21 @@ impl TerminalView {
 
     /// Returns the active local session's CWD, canonicalized via `dunce::canonicalize` to resolve
     /// symlinks and normalize the path.
-    ///
-    /// The canonicalization is memoized in `canonical_session_pwd_cache`, keyed on the
-    /// non-canonical path, and only recomputed when that path changes.
     pub fn canonical_session_pwd_if_local<C: ModelAsRef>(
         &self,
         ctx: &C,
     ) -> Option<CanonicalizedPath> {
-        let path = self.active_session_path_if_local(ctx)?;
+        self.canonicalize_local_pwd(self.active_session_path_if_local(ctx)?)
+    }
 
-        // Return the cached value when the non-canonical path has not changed.
+    /// Resolves a local working directory on disk, remembering the answer for the last path it was
+    /// asked about, so the disk is only touched again when the directory changes.
+    ///
+    /// The workspace asks for every terminal's directory on each pane-group event, which arrive
+    /// constantly while agents run. Resolving touches the filesystem, and while git or the repo
+    /// indexer is busy in a new worktree each lookup can stall, which froze the whole app for
+    /// seconds whenever a command started there.
+    fn canonicalize_local_pwd(&self, path: PathBuf) -> Option<CanonicalizedPath> {
         if let Some(cached) = self.canonical_session_pwd_cache.borrow().as_ref() {
             if cached.path == path {
                 return Some(cached.canonical.clone());
@@ -24702,10 +24707,11 @@ impl TerminalView {
     /// Returns the active session's CWD as a `LocalOrRemotePath`.
     ///
     /// For local sessions the CWD is canonicalized via `dunce::canonicalize`
-    /// and wrapped as `Local`. For remote sessions the CWD is read from
-    /// `active_block_metadata` and paired with the session's `host_id` to
-    /// form a `Remote` path. Returns `None` when no CWD is available or
-    /// (for remote sessions) the `host_id` has not been established yet.
+    /// (remembered until the CWD changes) and wrapped as `Local`. For remote
+    /// sessions the CWD is read from `active_block_metadata` and paired with
+    /// the session's `host_id` to form a `Remote` path. Returns `None` when no
+    /// CWD is available or (for remote sessions) the `host_id` has not been
+    /// established yet.
     pub fn pwd_as_local_or_remote(&self, ctx: &AppContext) -> Option<LocalOrRemotePath> {
         let session_id = self.active_block_session_id()?;
         let session = self.sessions.as_ref(ctx).get(session_id)?;
@@ -24720,8 +24726,8 @@ impl TerminalView {
                 .launch_data()
                 .and_then(|data| data.maybe_convert_absolute_path(cwd_str))
                 .unwrap_or_else(|| PathBuf::from(cwd_str));
-            let canonical = dunce::canonicalize(&path).ok()?;
-            Some(LocalOrRemotePath::Local(canonical))
+            let canonical = self.canonicalize_local_pwd(path)?;
+            Some(LocalOrRemotePath::Local(canonical.into()))
         } else {
             // Remote session: pair CWD with the session's host_id.
             let host_id = match session.session_type() {

@@ -5049,6 +5049,91 @@ fn test_pointer_opened_tab_configs_menu_does_not_select_top_item() {
 }
 
 #[cfg(feature = "local_fs")]
+#[test]
+fn a_terminal_resolves_its_directory_on_disk_once_until_the_directory_changes() {
+    use crate::terminal::event::BlockMetadataReceivedEvent;
+    use crate::terminal::model::block::BlockMetadata;
+    use crate::terminal::model::session::SessionInfo;
+    use crate::terminal::model::terminal_model::BlockIndex;
+    use crate::terminal::model_events::ModelEvent;
+    use crate::terminal::shell::ShellType;
+
+    // The workspace asks for every terminal's directory on each pane-group event. Resolving it on
+    // disk while a new worktree was busy froze the app, so it must only be resolved again when
+    // the terminal's directory changes. A symlink shows which answer came from the disk.
+    let dir = tempfile::tempdir().expect("create directory");
+    let (first, second, link) = (
+        dir.path().join("first"),
+        dir.path().join("second"),
+        dir.path().join("link"),
+    );
+    std::fs::create_dir(&first).unwrap();
+    std::fs::create_dir(&second).unwrap();
+    std::os::unix::fs::symlink(&first, &link).unwrap();
+    let resolved = |path: &Path| Some(LocalOrRemotePath::Local(dunce::canonicalize(path).unwrap()));
+
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let workspace = mock_workspace(&mut app);
+        let terminal = workspace.read(&app, |workspace, ctx| {
+            workspace
+                .active_tab_pane_group()
+                .as_ref(ctx)
+                .active_session_view(ctx)
+                .unwrap()
+        });
+        let (sessions, dispatcher) = terminal.read(&app, |terminal, _| {
+            (
+                terminal.sessions_model().clone(),
+                terminal.model_event_dispatcher().clone(),
+            )
+        });
+        sessions.update(&mut app, |sessions, _| {
+            let mut session = SessionInfo::new_for_test();
+            session.launch_data = Some(crate::terminal::ShellLaunchData::Executable {
+                executable_path: PathBuf::from("/bin/bash"),
+                shell_type: ShellType::Bash,
+            });
+            sessions.register_session_for_test(session);
+        });
+        let move_to = |app: &mut App, cwd: &Path| {
+            dispatcher.update(app, |_, ctx| {
+                ctx.emit(ModelEvent::BlockMetadataReceived(
+                    BlockMetadataReceivedEvent {
+                        block_metadata: BlockMetadata::new(
+                            Some(0.into()),
+                            Some(cwd.to_string_lossy().into_owned()),
+                        ),
+                        block_index: BlockIndex(0),
+                        is_after_in_band_command: false,
+                        is_done_bootstrapping: false,
+                    },
+                ));
+            });
+        };
+        let pwd =
+            |app: &App| terminal.read(app, |terminal, ctx| terminal.pwd_as_local_or_remote(ctx));
+
+        move_to(&mut app, &link);
+        assert_eq!(pwd(&app), resolved(&first));
+
+        // The link now leads elsewhere, but the terminal is still in the same directory, so the
+        // answer is the one already resolved rather than a new trip to the disk.
+        std::fs::remove_file(&link).unwrap();
+        std::os::unix::fs::symlink(&second, &link).unwrap();
+        assert_eq!(pwd(&app), resolved(&first));
+        assert_eq!(
+            terminal.read(&app, |terminal, ctx| terminal
+                .canonical_session_pwd_if_local(ctx)),
+            Some(CanonicalizedPath::try_from(first.as_path()).unwrap())
+        );
+
+        // A new directory is resolved again.
+        move_to(&mut app, &second);
+        assert_eq!(pwd(&app), resolved(&second));
+    });
+}
+
 fn init_repo_for_automatic_worktree_test() -> (TempDir, PathBuf) {
     fn git(repo: &Path, args: &[&str]) {
         let output = command::blocking::Command::new("git")
