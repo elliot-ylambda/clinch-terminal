@@ -860,6 +860,62 @@ fn going_to_an_asleep_tab_leaves_it_asleep_and_its_row_wake_button_wakes_it_in_p
     });
 }
 
+/// An asleep row's Wake button sits at the row's right edge, however short its title, so the
+/// buttons line up down the list instead of each one trailing its title.
+#[test]
+fn an_asleep_rows_wake_button_sits_at_the_rows_right_edge() {
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    let _vertical_tabs_guard = FeatureFlag::VerticalTabs.override_enabled(true);
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let workspace = mock_workspace(&mut app);
+        let starts = Rc::new(Cell::new(0));
+        let (window_id, rows) = workspace.update(&mut app, |workspace, ctx| {
+            workspace.vertical_tabs_panel_open = true;
+            let rows = [(); 2].map(|()| {
+                let (group, _) = add_asleep_agent_tab(workspace, &starts, ctx);
+                PaneViewLocator {
+                    pane_group_id: group.id(),
+                    pane_id: group.as_ref(ctx).focused_pane_id(ctx),
+                }
+            });
+            (ctx.window_id(), rows)
+        });
+        let mut presenter = warpui::Presenter::new(window_id);
+        app.update(|ctx| {
+            presenter.invalidate(
+                warpui::WindowInvalidation {
+                    updated: std::collections::HashSet::from([workspace.id()]),
+                    ..Default::default()
+                },
+                ctx,
+            );
+            presenter.build_scene(vec2f(1200., 800.), 1., None, ctx);
+        });
+        workspace.update(&mut app, |_, ctx| {
+            for row in rows {
+                let row_rect = ctx
+                    .element_position_by_id(vertical_tabs::vtab_pane_row_position_id(
+                        row.pane_group_id,
+                        row.pane_id,
+                    ))
+                    .expect("the asleep tab's row must be laid out");
+                let wake = ctx
+                    .element_position_by_id(vertical_tabs::vtab_row_wake_position_id(row))
+                    .expect("an asleep row shows a Wake button");
+                let gap = row_rect.max_x() - wake.max_x();
+                assert!(
+                    gap <= vertical_tabs::ROW_HORIZONTAL_PADDING + 1.,
+                    "the Wake button should end at the row's right padding, but ends {gap}px \
+                     before the row's edge"
+                );
+            }
+        });
+    });
+}
+
 /// What used to start every restored agent: a tab landing on screen without anyone choosing it.
 /// Launch, a window coming forward, and focus passes all do that, and none of them wakes a tab.
 #[test]

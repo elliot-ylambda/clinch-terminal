@@ -151,7 +151,7 @@ const ROW_MARK_SIZE: f32 = 16.;
 const COORDINATOR_TILE_OPACITY: Opacity = 28;
 /// How far the coordinator's tile reaches past its glyph on each side.
 const COORDINATOR_TILE_PADDING: f32 = 3.;
-const COORDINATOR_PIN_SIZE: f32 = 12.;
+const INLINE_PIN_SIZE: f32 = 12.;
 /// Roughly how far the Auto pill and switch reach in from the coordinator row's right edge.
 const COORDINATOR_CONTROLS_WIDTH: f32 = 104.;
 /// A section's tint: strong enough to group its tabs, quiet enough to read titles on.
@@ -166,15 +166,22 @@ const ROW_TITLE_SIZE: f32 = 13.;
 const ROW_WAKE_BUTTON_SIZE: f32 = 11.;
 /// 32px tall with one 13px line.
 const ROW_VERTICAL_PADDING: f32 = 7.;
-const ROW_HORIZONTAL_PADDING: f32 = 10.;
+pub(super) const ROW_HORIZONTAL_PADDING: f32 = 10.;
 pub(super) const VERTICAL_TABS_DETAIL_SIDECAR_POSITION_ID: &str = "vertical_tabs:detail_sidecar";
 
 /// Total size of the icon-with-status component rendered for each vertical-tabs row.
 /// Sub-components (circle, badge, cloud) are derived inside `render_icon_with_status`.
 const VERTICAL_TABS_ICON_SIZE: f32 = 24.;
 
-fn vtab_pane_row_position_id(pane_group_id: EntityId, pane_id: PaneId) -> String {
+pub(super) fn vtab_pane_row_position_id(pane_group_id: EntityId, pane_id: PaneId) -> String {
     format!("vertical_tabs:pane_row:{pane_group_id:?}:{pane_id}")
+}
+
+pub(super) fn vtab_row_wake_position_id(locator: PaneViewLocator) -> String {
+    format!(
+        "vertical_tabs:row_wake:{:?}:{}",
+        locator.pane_group_id, locator.pane_id
+    )
 }
 
 /// Save-position id for a tab group header's kebab button; anchors the group menu.
@@ -466,6 +473,7 @@ fn render_pane_row_element(
     props: PaneProps<'_>,
     padding: Padding,
     defer_events_to_children: bool,
+    pin_inline: bool,
     content: Box<dyn Element>,
     theme: &WarpTheme,
 ) -> Box<dyn Element> {
@@ -506,17 +514,15 @@ fn render_pane_row_element(
         is_pinned,
         container_is_hovered,
         origin_badge: _,
-        is_coordinator,
+        is_coordinator: _,
         auto_controls: _,
     } = props;
     let is_selected = is_active_tab && is_focused;
     let tokens = Tokens::new(theme);
     let tokens = &tokens;
-    // The coordinator's row keeps its controls in that corner and shows its pin beside them.
-    let show_pin = FeatureFlag::PinnedTabs.is_enabled()
-        && is_pinned
-        && !container_is_hovered
-        && !is_coordinator;
+    // A row with controls at its right edge shows its pin beside them, not over them in the corner.
+    let show_pin =
+        FeatureFlag::PinnedTabs.is_enabled() && is_pinned && !container_is_hovered && !pin_inline;
     let mut row = Hoverable::new(mouse_state, move |state| {
         // Hovered or selected rows always fully round; otherwise derive the
         // resting radius from the row's stack position.
@@ -4028,26 +4034,31 @@ fn render_row_wake_button(
 ) -> Box<dyn Element> {
     let tokens = *appearance.tokens();
     let font_family = appearance.ui_font_family();
-    Hoverable::new(mouse_state, move |state| {
+    // Outlined in the accent so it reads as a button, the same color as the Wake button on the
+    // card over the tab, and filled in on hover.
+    let button = Hoverable::new(mouse_state, move |state| {
         let (background, text) = if state.is_hovered() {
-            (tokens.surface_hover, tokens.text_1)
+            (tokens.accent, tokens.text_on_accent)
         } else {
-            (tokens.surface_field, tokens.text_2)
+            (tokens.accent_soft, tokens.accent)
         };
         Container::new(
             Text::new_inline("Wake", font_family, ROW_WAKE_BUTTON_SIZE)
+                .with_style(Properties::default().weight(Weight::Medium))
                 .with_color(text)
                 .finish(),
         )
-        .with_horizontal_padding(6.)
-        .with_vertical_padding(1.)
+        .with_horizontal_padding(8.)
+        .with_vertical_padding(2.)
         .with_background(ThemeFill::Solid(background))
+        .with_border(Border::all(1.).with_border_color(tokens.accent))
         .with_corner_radius(corners_sm())
         .finish()
     })
     .with_cursor(Cursor::PointingHand)
     .on_click(move |ctx, _, _| ctx.dispatch_typed_action(WorkspaceAction::WakePane(locator)))
-    .finish()
+    .finish();
+    SavePosition::new(button, &vtab_row_wake_position_id(locator)).finish()
 }
 
 fn is_restoring(state: Option<RestoreState>) -> bool {
@@ -4298,6 +4309,38 @@ fn render_pane_row(props: PaneProps<'_>, app: &AppContext) -> Box<dyn Element> {
         _ => None,
     };
     let is_asleep = terminal_asleep_since(&props.typed, app).is_some();
+    // Whatever a row shows after its title sits at the right edge, where every row's lines up.
+    let mut trailing_items: Vec<Box<dyn Element>> = Vec::new();
+    if is_restoring(restore_state) {
+        trailing_items.push(render_restore_spinner(appearance));
+    }
+    if let TypedPane::Terminal(terminal_pane) = &props.typed {
+        trailing_items.extend(render_background_work_badge(
+            terminal_pane.terminal_view(app).as_ref(app),
+            props.badge_mouse_states.background_work.clone(),
+            appearance,
+            app,
+        ));
+    }
+    if is_asleep {
+        trailing_items.push(render_row_wake_button(
+            PaneViewLocator {
+                pane_group_id: props.pane_group_id,
+                pane_id: props.pane_id,
+            },
+            props.badge_mouse_states.wake.clone(),
+            appearance,
+        ));
+    }
+    if let Some(controls) = props.auto_controls.clone() {
+        trailing_items.push(super::auto_coordinate::render_auto_controls(
+            controls, appearance,
+        ));
+    }
+    let has_trailing_items = !trailing_items.is_empty();
+    // A row with something at its right edge shows its pin beside its title, not over it in the
+    // corner.
+    let pin_inline = props.is_coordinator || has_trailing_items;
     let title_color = WarpThemeFill::Solid(if is_restoring(restore_state) || is_asleep {
         tokens.text_3
     } else if is_quiet {
@@ -4373,35 +4416,16 @@ fn render_pane_row(props: PaneProps<'_>, app: &AppContext) -> Box<dyn Element> {
             appearance,
             app,
         ))
-        // On the coordinator row the title takes the free space, which keeps its Auto pill and
-        // on/off switch at the right edge without truncating the title.
-        .with_child(if props.auto_controls.is_some() {
+        // The title takes the free space, which pushes the trailing items to the right edge
+        // without truncating the title.
+        .with_child(if has_trailing_items {
             Expanded::new(1., text.finish()).finish()
         } else {
             Shrinkable::new(1., text.finish()).finish()
         })
-        .with_children(is_restoring(restore_state).then(|| render_restore_spinner(appearance)))
-        .with_children(match &props.typed {
-            TypedPane::Terminal(terminal_pane) => render_background_work_badge(
-                terminal_pane.terminal_view(app).as_ref(app),
-                props.badge_mouse_states.background_work.clone(),
-                appearance,
-                app,
-            ),
-            _ => None,
-        })
-        .with_children(is_asleep.then(|| {
-            render_row_wake_button(
-                PaneViewLocator {
-                    pane_group_id: props.pane_group_id,
-                    pane_id: props.pane_id,
-                },
-                props.badge_mouse_states.wake.clone(),
-                appearance,
-            )
-        }))
+        // Right after the title, so nothing at the right edge moves when the pin hides on hover.
         .with_children(
-            (props.is_coordinator
+            (pin_inline
                 && props.is_pinned
                 && !props.container_is_hovered
                 && FeatureFlag::PinnedTabs.is_enabled())
@@ -4411,17 +4435,12 @@ fn render_pane_row(props: PaneProps<'_>, app: &AppContext) -> Box<dyn Element> {
                         .to_warpui_icon(WarpThemeFill::Solid(tokens.text_3))
                         .finish(),
                 )
-                .with_width(COORDINATOR_PIN_SIZE)
-                .with_height(COORDINATOR_PIN_SIZE)
+                .with_width(INLINE_PIN_SIZE)
+                .with_height(INLINE_PIN_SIZE)
                 .finish()
             }),
         )
-        .with_children(
-            props
-                .auto_controls
-                .clone()
-                .map(|controls| super::auto_coordinate::render_auto_controls(controls, appearance)),
-        )
+        .with_children(trailing_items)
         .finish();
 
     let left_padding = row_left_padding(props.is_coordinator);
@@ -4431,6 +4450,7 @@ fn render_pane_row(props: PaneProps<'_>, app: &AppContext) -> Box<dyn Element> {
             .with_left(left_padding)
             .with_right(ROW_HORIZONTAL_PADDING),
         true,
+        pin_inline,
         content,
         theme,
     )
